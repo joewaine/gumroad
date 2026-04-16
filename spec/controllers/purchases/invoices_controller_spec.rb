@@ -333,16 +333,30 @@ describe Purchases::InvoicesController, :vcr, type: :controller, inertia: true d
             expect(Refund.last).to eq nil
           end
 
-          it "does not refund tax but still send receipt if already refunded" do
+          it "does not refund tax but still sends receipt if already refunded" do
             @purchase.refund_gumroad_taxes!(refunding_user_id: nil, note: "note")
             expect(Refund.count).to be(1)
 
             post :create, params: payload.merge(vat_id: "IE6388047V", purchase_id: @purchase.external_id, email: @purchase.email)
 
             expect(response).to redirect_to(new_purchase_invoice_path(@purchase.external_id, email: @purchase.email))
-            expect(flash[:notice]).to eq("The invoice will be downloaded automatically. VAT has also been refunded.")
+            expect(flash[:notice]).to eq("The invoice will be downloaded automatically.")
             expect(session["invoice_file_url_#{@purchase.external_id}"]).to eq(@s3_obj_public_url)
             expect(Refund.count).to be(1)
+          end
+
+          it "still generates the invoice but suppresses the VAT-refunded notice when the purchase has an active dispute" do
+            Purchase.handle_charge_event(build(:charge_event_dispute_formalized, charge_id: @purchase.stripe_transaction_id))
+            @purchase.reload
+
+            expect do
+              post :create, params: payload.merge(vat_id: "IE6388047V", purchase_id: @purchase.external_id, email: @purchase.email)
+            end.not_to change(Refund, :count)
+
+            expect(response).to redirect_to(new_purchase_invoice_path(@purchase.external_id, email: @purchase.email))
+            expect(flash[:notice]).to eq("The invoice will be downloaded automatically.")
+            expect(flash[:notice]).not_to include("VAT")
+            expect(session["invoice_file_url_#{@purchase.external_id}"]).to eq(@s3_obj_public_url)
           end
         end
 
@@ -571,7 +585,7 @@ describe Purchases::InvoicesController, :vcr, type: :controller, inertia: true d
               end.to_not change(Refund, :count)
 
               expect(response).to redirect_to(new_purchase_invoice_path(purchase.external_id, email: purchase.email))
-              expect(flash[:notice]).to eq("The invoice will be downloaded automatically. VAT has also been refunded.")
+              expect(flash[:notice]).to eq("The invoice will be downloaded automatically.")
               expect(session["invoice_file_url_#{purchase.external_id}"]).to eq(@s3_obj_public_url)
             end
           end

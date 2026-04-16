@@ -54,10 +54,17 @@ class ProcessEarlyFraudWarningJob
     end
 
     def process_refundable_for_fraud!(early_fraud_warning)
-      early_fraud_warning.chargeable.refund_for_fraud_and_block_buyer!(GUMROAD_ADMIN_ID)
-      early_fraud_warning.update_as_resolved!(
-        resolution: EarlyFraudWarning::RESOLUTION_RESOLVED_REFUNDED_FOR_FRAUD
-      )
+      chargeable = early_fraud_warning.chargeable
+      if chargeable.refund_for_fraud_and_block_buyer!(GUMROAD_ADMIN_ID)
+        early_fraud_warning.update_as_resolved!(
+          resolution: EarlyFraudWarning::RESOLUTION_RESOLVED_REFUNDED_FOR_FRAUD
+        )
+      else
+        Rails.logger.warn("ProcessEarlyFraudWarningJob: fraud refund blocked for EFW #{early_fraud_warning.id}: #{chargeable.errors.full_messages.to_sentence}")
+        early_fraud_warning.update_as_resolved!(
+          resolution: EarlyFraudWarning::RESOLUTION_NOT_ACTIONABLE_DISPUTED
+        )
+      end
     end
 
     def process_subscription_contactable!(early_fraud_warning)

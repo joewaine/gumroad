@@ -27,14 +27,14 @@ class Purchases::InvoicesController < ApplicationController
     invoice_presenter = InvoicePresenter.new(@chargeable, address_fields:, additional_notes: invoice_params[:additional_notes]&.strip, business_vat_id:)
 
     begin
-      @chargeable.refund_gumroad_taxes!(refunding_user_id: logged_in_user&.id, note: address_fields.to_json, business_vat_id:) if business_vat_id
+      tax_refund_succeeded = business_vat_id && @chargeable.refund_gumroad_taxes!(refunding_user_id: logged_in_user&.id, note: address_fields.to_json, business_vat_id:)
 
       invoice_html = render_to_string(locals: { invoice_presenter: }, formats: [:pdf], layout: false)
       pdf = PDFKit.new(invoice_html, page_size: "Letter").to_pdf
       s3_obj = @chargeable.upload_invoice_pdf(pdf)
 
       message = +"The invoice will be downloaded automatically."
-      if business_vat_id
+      if tax_refund_succeeded
         notice =
           if @chargeable.purchase_sales_tax_info.present? &&
              (Compliance::Countries::GST_APPLICABLE_COUNTRY_CODES.include?(@chargeable.purchase_sales_tax_info.country_code) ||

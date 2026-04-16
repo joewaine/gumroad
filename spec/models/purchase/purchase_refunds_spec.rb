@@ -844,6 +844,7 @@ describe "PurchaseRefunds", :vcr do
       let(:admin) { create(:admin_user) }
       let(:charge_event_dispute) { build(:charge_event_dispute_formalized, charge_id: purchase.stripe_transaction_id) }
       let(:charge_event_dispute_won) { build(:charge_event_dispute_won, charge_id: purchase.stripe_transaction_id) }
+      let(:charge_event_dispute_lost) { build(:charge_event_dispute_lost, charge_id: purchase.stripe_transaction_id) }
       let(:expected_error) { Purchase::Refundable::ACTIVE_DISPUTE_REFUND_ERROR }
 
       context "when purchase has an active dispute" do
@@ -886,6 +887,64 @@ describe "PurchaseRefunds", :vcr do
           expect(purchase).not_to receive(:decrement_balance_for_refund_or_chargeback!)
 
           purchase.refund_and_save!(admin.id)
+        end
+
+        it "does not decrement the seller balance when a VAT refund is attempted" do
+          purchase.update!(gumroad_tax_cents: 20, total_transaction_cents: purchase.price_cents + 20)
+
+          expect(purchase).not_to receive(:decrement_balance_for_refund_or_chargeback!)
+
+          purchase.refund_gumroad_taxes!(refunding_user_id: admin.id)
+        end
+
+        it "blocks a fraud refund, does not cancel the subscription, and does not email the seller" do
+          membership_purchase = create(:membership_purchase)
+          membership_purchase.update!(chargeback_date: Time.current)
+
+          expect(ChargeProcessor).not_to receive(:refund!)
+          expect(membership_purchase.subscription).not_to receive(:cancel_effective_immediately!)
+
+          expect do
+            result = membership_purchase.refund_for_fraud!(admin.id)
+            expect(result).to eq(false)
+          end.not_to have_enqueued_mail(ContactingCreatorMailer, :purchase_refunded_for_fraud)
+
+          expect(membership_purchase.errors[:base]).to include(expected_error)
+        end
+
+        it "blocks refund_for_fraud_and_block_buyer! and does not block the buyer" do
+          expect(ChargeProcessor).not_to receive(:refund!)
+          expect(purchase).not_to receive(:block_buyer!)
+
+          result = purchase.refund_for_fraud_and_block_buyer!(admin.id)
+
+          expect(result).to eq(false)
+          expect(purchase.errors[:base]).to include(expected_error)
+        end
+
+        it "exposes the full refundable amount so dispute formalization can decrement correctly" do
+          # The dispute guard must not short-circuit amount_refundable_cents, because
+          # decrement_balance_for_refund_or_chargeback! uses it during dispute
+          # formalization to calculate how much of the seller's balance to debit.
+          expect(purchase.amount_refundable_cents).to eq(purchase.price_cents)
+        end
+      end
+
+      context "when dispute has been lost (buyer won)" do
+        before do
+          Purchase.handle_charge_event(charge_event_dispute)
+          purchase.reload
+          Purchase.handle_charge_event(charge_event_dispute_lost)
+          purchase.reload
+        end
+
+        it "still blocks a refund because the chargeback was not reversed" do
+          expect(ChargeProcessor).not_to receive(:refund!)
+
+          result = purchase.refund_and_save!(admin.id)
+
+          expect(result).to eq(false)
+          expect(purchase.errors[:base]).to include(expected_error)
         end
       end
 
@@ -1373,10 +1432,16 @@ describe "PurchaseRefunds", :vcr do
     let(:admin) { create(:admin_user) }
     let(:purchase) { create(:purchase) }
 
-    it "calls refund_for_fraud! and block_buyer!" do
-      expect(purchase).to receive(:refund_for_fraud!).with(admin.id)
+    it "calls refund_for_fraud! and block_buyer! when the refund succeeds" do
+      expect(purchase).to receive(:refund_for_fraud!).with(admin.id).and_return(true)
       expect(purchase).to receive(:block_buyer!).with(blocking_user_id: admin.id)
-      purchase.refund_for_fraud_and_block_buyer!(admin.id)
+      expect(purchase.refund_for_fraud_and_block_buyer!(admin.id)).to eq(true)
+    end
+
+    it "does not block the buyer when the refund is blocked and returns false" do
+      expect(purchase).to receive(:refund_for_fraud!).with(admin.id).and_return(false)
+      expect(purchase).not_to receive(:block_buyer!)
+      expect(purchase.refund_for_fraud_and_block_buyer!(admin.id)).to eq(false)
     end
   end
 

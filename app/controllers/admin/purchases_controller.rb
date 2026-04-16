@@ -17,7 +17,7 @@ class Admin::PurchasesController < Admin::BaseController
     if @purchase.refund_and_save!(current_user.id)
       render json: { success: true }
     else
-      render json: { success: false }
+      render json: { success: false, message: @purchase.errors.full_messages.to_sentence.presence }
     end
   end
 
@@ -25,7 +25,7 @@ class Admin::PurchasesController < Admin::BaseController
     if @purchase.refund_for_fraud_and_block_buyer!(current_user.id)
       render json: { success: true }
     else
-      render json: { success: false }
+      render json: { success: false, message: @purchase.errors.full_messages.to_sentence.presence }
     end
   end
 

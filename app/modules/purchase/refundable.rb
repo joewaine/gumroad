@@ -2,7 +2,7 @@
 
 class Purchase
   module Refundable
-    ACTIVE_DISPUTE_REFUND_ERROR = "This purchase is under an active dispute and can't be refunded. The dispute will determine whether the buyer is refunded.".freeze
+    ACTIVE_DISPUTE_REFUND_ERROR = "This purchase has an unresolved chargeback and can't be refunded. The chargeback outcome determines whether the buyer is refunded."
 
     # * amount - the amount to refund (out of `Purchase#price_cents`, VAT-exclusive). VAT will be refunded proportinally to this amount.
     def refund!(refunding_user_id:, amount: nil)
@@ -284,10 +284,10 @@ class Purchase
   end
 
   def refund_gumroad_taxes!(refunding_user_id:, note: nil, business_vat_id: nil)
-    return false if block_refund_for_active_dispute!
-
     gumroad_tax_refundable_cents = self.gumroad_tax_refundable_cents
     return false if stripe_refunded || gumroad_tax_refundable_cents <= 0
+
+    return false if block_refund_for_active_dispute!
 
     begin
       logger.info("Refunding purchase: #{id} gumroad taxes: #{self.gumroad_tax_refundable_cents}")
@@ -329,14 +329,16 @@ class Purchase
   end
 
   def refund_for_fraud_and_block_buyer!(refunding_user_id)
-    refund_for_fraud!(refunding_user_id)
+    return false unless refund_for_fraud!(refunding_user_id)
     block_buyer!(blocking_user_id: refunding_user_id)
+    true
   end
 
   def refund_for_fraud!(refunding_user_id)
-    refund_and_save!(refunding_user_id, is_for_fraud: true)
+    return false unless refund_and_save!(refunding_user_id, is_for_fraud: true)
     subscription.cancel_effective_immediately! if subscription.present? && !subscription.deactivated?
     ContactingCreatorMailer.purchase_refunded_for_fraud(id).deliver_later(queue: "default") unless seller.suspended?
+    true
   end
 
   def formatted_refund_state
