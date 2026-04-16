@@ -63,4 +63,50 @@ describe ValidateRecaptcha, type: :controller do
       expect(JSON.parse(response.body)["error"]).to eq("captcha_failed")
     end
   end
+
+  describe "score-based rejection" do
+    it "rejects requests with a score below the threshold" do
+      low_score_response = {
+        "tokenProperties" => { "valid" => true },
+        "riskAnalysis" => { "score" => 0.1, "reasons" => ["AUTOMATION"] }
+      }
+      stubbed_response = instance_double(HTTParty::Response, parsed_response: low_score_response, code: 200)
+      allow(stubbed_response).to receive(:to_s).and_return(low_score_response.to_json)
+      allow(HTTParty).to receive(:post).and_return(stubbed_response)
+
+      post :action, params: { "g-recaptcha-response" => "test_token" }
+
+      expect(response).to have_http_status(:unprocessable_entity)
+      expect(JSON.parse(response.body)["error"]).to eq("captcha_failed")
+    end
+
+    it "accepts requests with a score at or above the threshold" do
+      high_score_response = {
+        "tokenProperties" => { "valid" => true },
+        "riskAnalysis" => { "score" => 0.9, "reasons" => [] }
+      }
+      stubbed_response = instance_double(HTTParty::Response, parsed_response: high_score_response, code: 200)
+      allow(stubbed_response).to receive(:to_s).and_return(high_score_response.to_json)
+      allow(HTTParty).to receive(:post).and_return(stubbed_response)
+
+      post :action, params: { "g-recaptcha-response" => "test_token" }
+
+      expect(response).to have_http_status(:ok)
+      expect(JSON.parse(response.body)["success"]).to be true
+    end
+
+    it "accepts requests when riskAnalysis is absent (backwards compatibility)" do
+      no_score_response = {
+        "tokenProperties" => { "valid" => true }
+      }
+      stubbed_response = instance_double(HTTParty::Response, parsed_response: no_score_response, code: 200)
+      allow(stubbed_response).to receive(:to_s).and_return(no_score_response.to_json)
+      allow(HTTParty).to receive(:post).and_return(stubbed_response)
+
+      post :action, params: { "g-recaptcha-response" => "test_token" }
+
+      expect(response).to have_http_status(:ok)
+      expect(JSON.parse(response.body)["success"]).to be true
+    end
+  end
 end
