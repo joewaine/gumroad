@@ -866,10 +866,7 @@ describe "PurchaseRefunds", :vcr do
           result = purchase.refund!(refunding_user_id: create(:admin_user).id, amount: purchase.price_cents)
 
           expect(result).to eq(false)
-        end
-
-        it "returns 0 for amount_refundable_cents" do
-          expect(purchase.amount_refundable_cents).to eq(0)
+          expect(purchase.errors[:base]).to include("This purchase has an active dispute. The funds have already been returned to the buyer. No additional refund is needed.")
         end
       end
 
