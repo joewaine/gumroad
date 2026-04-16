@@ -1,8 +1,6 @@
 # frozen_string_literal: true
 
 class Api::V2::LinksController < Api::V2::BaseController
-  include RejectsApiMultipartFileUploads
-
   BASE_PRODUCT_ASSOCIATIONS = [
     :preorder_link, :tags, :taxonomy,
     { display_asset_previews: [:file_attachment, :file_blob] },

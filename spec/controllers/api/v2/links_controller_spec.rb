@@ -1046,28 +1046,41 @@ describe Api::V2::LinksController do
         expect(response.parsed_body["message"]).to include("must reference your own uploaded files")
       end
 
-      it "rejects files containing uploaded file objects" do
+      it "rejects direct multipart file uploads at a top-level param with a 400 and surfaces the presigned flow" do
         upload = Rack::Test::UploadedFile.new(Rails.root.join("spec/support/fixtures/smilie.png"), "image/png")
-        put @action, params: @params.merge(files: [upload])
 
-        expect(response).to be_successful
-        expect(response.parsed_body["success"]).to be false
-        expect(response.parsed_body["message"]).to include("files must be an array of file objects")
+        put @action, params: @params.merge(preview: upload)
+
+        expect(response).to have_http_status(:bad_request)
+        body = response.parsed_body
+        expect(body["success"]).to be(false)
+        expect(body["message"]).to include("Direct multipart file uploads are not supported")
+        expect(body["message"]).to include("preview")
+        expect(body["message"]).to include("POST /v2/files/presign")
       end
 
-      it "rejects direct multipart file uploads on every top-level param and surfaces the presigned flow" do
+      it "rejects uploads nested inside files[] with a 400 so the presigned-flow guidance is surfaced, not the generic shape error" do
         upload = Rack::Test::UploadedFile.new(Rails.root.join("spec/support/fixtures/smilie.png"), "image/png")
 
-        %i[product_file preview thumbnail file cover image attachment].each do |param|
-          put @action, params: @params.merge(param => upload)
+        put @action, params: @params.merge(files: [upload])
 
-          expect(response).to be_successful
-          body = response.parsed_body
-          expect(body["success"]).to be(false), "Expected #{param} to be rejected but got success"
-          expect(body["message"]).to include("Direct multipart file uploads are not supported")
-          expect(body["message"]).to include(param.to_s)
-          expect(body["message"]).to include("POST /v2/files/presign")
-        end
+        expect(response).to have_http_status(:bad_request)
+        body = response.parsed_body
+        expect(body["success"]).to be(false)
+        expect(body["message"]).to include("Direct multipart file uploads are not supported")
+        expect(body["message"]).to include("files.0")
+      end
+
+      it "rejects uploads nested inside files[{url: upload}] so callers see the presigned-flow guidance" do
+        upload = Rack::Test::UploadedFile.new(Rails.root.join("spec/support/fixtures/smilie.png"), "image/png")
+
+        put @action, params: @params.merge(files: [{ url: upload }])
+
+        expect(response).to have_http_status(:bad_request)
+        body = response.parsed_body
+        expect(body["success"]).to be(false)
+        expect(body["message"]).to include("Direct multipart file uploads are not supported")
+        expect(body["message"]).to include("files.0.url")
       end
 
       it "does not trigger the multipart guard for ordinary string params" do
@@ -1075,13 +1088,15 @@ describe Api::V2::LinksController do
         expect(response.parsed_body["success"]).to be(true)
       end
 
-      it "rejects rich_content containing uploaded file objects" do
+      it "rejects rich_content containing uploaded file objects with a 400 so callers see the presigned-flow guidance" do
         upload = Rack::Test::UploadedFile.new(Rails.root.join("spec/support/fixtures/smilie.png"), "image/png")
         put @action, params: @params.merge(rich_content: [upload])
 
-        expect(response).to be_successful
-        expect(response.parsed_body["success"]).to be false
-        expect(response.parsed_body["message"]).to include("rich_content must be an array of content page objects")
+        expect(response).to have_http_status(:bad_request)
+        body = response.parsed_body
+        expect(body["success"]).to be(false)
+        expect(body["message"]).to include("Direct multipart file uploads are not supported")
+        expect(body["message"]).to include("rich_content.0")
       end
 
       it "rejects non-array cover_ids" do
