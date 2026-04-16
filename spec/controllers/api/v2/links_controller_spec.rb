@@ -1055,18 +1055,24 @@ describe Api::V2::LinksController do
         expect(response.parsed_body["message"]).to include("files must be an array of file objects")
       end
 
-      it "rejects direct file uploads via unsupported multipart params" do
+      it "rejects direct multipart file uploads on every top-level param and surfaces the presigned flow" do
         upload = Rack::Test::UploadedFile.new(Rails.root.join("spec/support/fixtures/smilie.png"), "image/png")
 
-        %i[product_file preview thumbnail].each do |param|
+        %i[product_file preview thumbnail file cover image attachment].each do |param|
           put @action, params: @params.merge(param => upload)
 
           expect(response).to be_successful
           body = response.parsed_body
           expect(body["success"]).to be(false), "Expected #{param} to be rejected but got success"
-          expect(body["message"]).to include("not supported")
-          expect(body["message"]).to include("presigned upload flow")
+          expect(body["message"]).to include("Direct multipart file uploads are not supported")
+          expect(body["message"]).to include(param.to_s)
+          expect(body["message"]).to include("POST /v2/files/presign")
         end
+      end
+
+      it "does not trigger the multipart guard for ordinary string params" do
+        put @action, params: @params.merge(name: "Updated via string", description: "<p>Plain text</p>")
+        expect(response.parsed_body["success"]).to be(true)
       end
 
       it "rejects rich_content containing uploaded file objects" do

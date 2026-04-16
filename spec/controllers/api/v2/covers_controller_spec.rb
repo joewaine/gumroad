@@ -102,6 +102,17 @@ describe Api::V2::CoversController do
         expect(body["message"]).to include("Covers must be an image")
       end
 
+      it "rejects direct multipart file uploads with guidance on the presigned flow" do
+        upload = Rack::Test::UploadedFile.new(Rails.root.join("spec", "support", "fixtures", "kFDzu.png"), "image/png")
+        post @action, params: @params.merge(file: upload)
+
+        body = response.parsed_body
+        expect(body["success"]).to be(false)
+        expect(body["message"]).to include("Direct multipart file uploads are not supported")
+        expect(body["message"]).to include("POST /v2/files/presign")
+        expect(@product.reload.asset_previews.alive.count).to eq(0)
+      end
+
       it "respects the maximum cover count" do
         Link::MAX_PREVIEW_COUNT.times do
           create(:asset_preview, link: @product)

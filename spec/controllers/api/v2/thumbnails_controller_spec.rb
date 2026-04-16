@@ -91,6 +91,17 @@ describe Api::V2::ThumbnailsController do
         expect(body["message"]).to eq("The signed_blob_id is invalid or expired.")
       end
 
+      it "rejects direct multipart file uploads with guidance on the presigned flow" do
+        upload = Rack::Test::UploadedFile.new(Rails.root.join("spec", "support", "fixtures", "smilie.png"), "image/png")
+        post @action, params: @params.merge(file: upload)
+
+        body = response.parsed_body
+        expect(body["success"]).to be(false)
+        expect(body["message"]).to include("Direct multipart file uploads are not supported")
+        expect(body["message"]).to include("POST /v2/files/presign")
+        expect(@product.reload.thumbnail).to be_nil
+      end
+
       it "revives a previously deleted thumbnail" do
         thumbnail = create(:thumbnail, product: @product)
         thumbnail.mark_deleted!

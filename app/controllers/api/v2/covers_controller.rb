@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 class Api::V2::CoversController < Api::V2::BaseController
+  include RejectsApiMultipartFileUploads
+
   before_action { doorkeeper_authorize! :edit_products }
   before_action :fetch_product
 
