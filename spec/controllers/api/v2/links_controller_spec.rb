@@ -1055,6 +1055,20 @@ describe Api::V2::LinksController do
         expect(response.parsed_body["message"]).to include("files must be an array of file objects")
       end
 
+      it "rejects direct file uploads via unsupported multipart params" do
+        upload = Rack::Test::UploadedFile.new(Rails.root.join("spec/support/fixtures/smilie.png"), "image/png")
+
+        %i[product_file preview thumbnail].each do |param|
+          put @action, params: @params.merge(param => upload)
+
+          expect(response).to be_successful
+          body = response.parsed_body
+          expect(body["success"]).to be(false), "Expected #{param} to be rejected but got success"
+          expect(body["message"]).to include("not supported")
+          expect(body["message"]).to include("presigned upload flow")
+        end
+      end
+
       it "rejects rich_content containing uploaded file objects" do
         upload = Rack::Test::UploadedFile.new(Rails.root.join("spec/support/fixtures/smilie.png"), "image/png")
         put @action, params: @params.merge(rich_content: [upload])

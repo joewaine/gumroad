@@ -221,7 +221,7 @@ class AssetPreview < ApplicationRecord
     def url_or_file
       return if deleted?
 
-      errors.add(:base, "Could not process your preview, please try again.") unless valid_file_type?
+      errors.add(:base, "Covers must be an image (JPEG, PNG, GIF) or video. The file you provided is not a supported format.") unless valid_file_type?
     end
 
     def max_preview_count

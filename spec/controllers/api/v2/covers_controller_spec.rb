@@ -88,6 +88,20 @@ describe Api::V2::CoversController do
         expect(body["message"]).to eq("Please provide a signed_blob_id or url.")
       end
 
+      it "returns a descriptive error for non-image file types" do
+        blob = ActiveStorage::Blob.create_and_upload!(
+          io: StringIO.new("%PDF-1.4 fake pdf content"),
+          filename: "document.pdf",
+          content_type: "application/pdf"
+        )
+
+        post @action, params: @params.merge(signed_blob_id: blob.signed_id)
+
+        body = response.parsed_body
+        expect(body["success"]).to be(false)
+        expect(body["message"]).to include("Covers must be an image")
+      end
+
       it "respects the maximum cover count" do
         Link::MAX_PREVIEW_COUNT.times do
           create(:asset_preview, link: @product)

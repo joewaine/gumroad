@@ -409,7 +409,17 @@ class Api::V2::LinksController < Api::V2::BaseController
       error_with_object(:product, product)
     end
 
+    UNSUPPORTED_FILE_PARAMS = %i[product_file preview thumbnail file].freeze
+    private_constant :UNSUPPORTED_FILE_PARAMS
+
     def check_types_of_file_objects
+      unsupported = UNSUPPORTED_FILE_PARAMS.select { |key| params[key].present? && params[key].respond_to?(:tempfile) }
+      if unsupported.any?
+        return render_response(false, message: "Direct file uploads via #{unsupported.join(", ")} are not supported. " \
+                                               "Use the presigned upload flow: POST /v2/files/presign, upload to S3, " \
+                                               "POST /v2/files/complete, then pass the file URL in the files array.")
+      end
+
       return if params[:file].class != String && params[:preview].class != String
 
       render_response(false, message: "You entered the name of the file to be uploaded incorrectly. Please refer to " \
