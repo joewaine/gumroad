@@ -834,6 +834,67 @@ describe "PurchaseRefunds", :vcr do
       end
     end
 
+    describe "refund blocked on active dispute" do
+      let(:purchase) do
+        purchase = create(:purchase_in_progress, chargeable: create(:chargeable))
+        purchase.process!
+        purchase.update_balance_and_mark_successful!
+        purchase
+      end
+
+      let(:charge_event_dispute) { build(:charge_event_dispute_formalized, charge_id: purchase.stripe_transaction_id) }
+      let(:charge_event_dispute_won) { build(:charge_event_dispute_won, charge_id: purchase.stripe_transaction_id) }
+
+      context "when purchase has an active dispute" do
+        before do
+          Purchase.handle_charge_event(charge_event_dispute)
+          purchase.reload
+        end
+
+        it "blocks the refund and does not call the charge processor" do
+          expect(ChargeProcessor).not_to receive(:refund!)
+
+          result = purchase.refund_and_save!(create(:admin_user).id)
+
+          expect(result).to eq(false)
+          expect(purchase.errors[:base]).to include("This purchase has an active dispute. The funds have already been returned to the buyer. No additional refund is needed.")
+        end
+
+        it "blocks partial refunds via refund!" do
+          expect(ChargeProcessor).not_to receive(:refund!)
+
+          result = purchase.refund!(refunding_user_id: create(:admin_user).id, amount: purchase.price_cents)
+
+          expect(result).to eq(false)
+        end
+
+        it "returns 0 for amount_refundable_cents" do
+          expect(purchase.amount_refundable_cents).to eq(0)
+        end
+      end
+
+      context "when dispute has been reversed" do
+        before do
+          Purchase.handle_charge_event(charge_event_dispute)
+          purchase.reload
+          Purchase.handle_charge_event(charge_event_dispute_won)
+          purchase.reload
+        end
+
+        it "allows the refund" do
+          expect(ChargeProcessor).to receive(:refund!).and_call_original
+
+          purchase.refund_and_save!(create(:admin_user).id)
+
+          expect(purchase.reload.stripe_refunded).to be(true)
+        end
+
+        it "returns the full refundable amount" do
+          expect(purchase.amount_refundable_cents).to eq(purchase.price_cents)
+        end
+      end
+    end
+
     it "calls 'send_refunded_notification_webhook' to send sale refunded notification to the seller" do
       expect(ChargeProcessor).to receive(:refund!).with(@purchase.charge_processor_id, @purchase.stripe_transaction_id, anything).and_call_original
       expect(@purchase.stripe_refunded).to be(false)

@@ -1514,7 +1514,8 @@ class Purchase < ApplicationRecord
   end
 
   def amount_refundable_cents
-    return 0 unless charge_processor_id.in?(ChargeProcessor.charge_processor_ids) # We can't refund purchases where we've removed support for the payment method
+    return 0 unless charge_processor_id.in?(ChargeProcessor.charge_processor_ids)
+    return 0 if chargedback_not_reversed?
     price_cents - amount_refunded_cents
   end
 
