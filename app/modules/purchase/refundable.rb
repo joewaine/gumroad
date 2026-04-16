@@ -2,12 +2,11 @@
 
 class Purchase
   module Refundable
+    ACTIVE_DISPUTE_REFUND_ERROR = "This purchase is under an active dispute and can't be refunded. The dispute will determine whether the buyer is refunded.".freeze
+
     # * amount - the amount to refund (out of `Purchase#price_cents`, VAT-exclusive). VAT will be refunded proportinally to this amount.
     def refund!(refunding_user_id:, amount: nil)
-      if chargedback_not_reversed?
-        errors.add :base, "This purchase has an active dispute. The funds have already been returned to the buyer. No additional refund is needed."
-        return false
-      end
+      return false if block_refund_for_active_dispute!
 
       if amount.blank?
         refund_and_save!(refunding_user_id)
@@ -34,10 +33,7 @@ class Purchase
     def refund_and_save!(refunding_user_id, amount_cents: nil, is_for_fraud: false)
       return if stripe_transaction_id.blank? || stripe_refunded
 
-      if chargedback_not_reversed?
-        errors.add :base, "This purchase has an active dispute. The funds have already been returned to the buyer. No additional refund is needed."
-        return false
-      end
+      return false if block_refund_for_active_dispute!
 
       return if amount_refundable_cents <= 0
 
@@ -189,6 +185,13 @@ class Purchase
                  gumroad_tax_cents: gumroad_tax_cents_refunded,
                  refunding_user_id:)
     end
+
+    private
+      def block_refund_for_active_dispute!
+        return false unless chargedback_not_reversed?
+        errors.add :base, ACTIVE_DISPUTE_REFUND_ERROR
+        true
+      end
   end
 
   # refunding_user_id can't be enforced from console (no current user), in which case it will be nil
@@ -281,6 +284,8 @@ class Purchase
   end
 
   def refund_gumroad_taxes!(refunding_user_id:, note: nil, business_vat_id: nil)
+    return false if block_refund_for_active_dispute!
+
     gumroad_tax_refundable_cents = self.gumroad_tax_refundable_cents
     return false if stripe_refunded || gumroad_tax_refundable_cents <= 0
 

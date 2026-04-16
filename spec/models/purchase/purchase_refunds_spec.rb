@@ -841,9 +841,10 @@ describe "PurchaseRefunds", :vcr do
         purchase.update_balance_and_mark_successful!
         purchase
       end
-
+      let(:admin) { create(:admin_user) }
       let(:charge_event_dispute) { build(:charge_event_dispute_formalized, charge_id: purchase.stripe_transaction_id) }
       let(:charge_event_dispute_won) { build(:charge_event_dispute_won, charge_id: purchase.stripe_transaction_id) }
+      let(:expected_error) { Purchase::Refundable::ACTIVE_DISPUTE_REFUND_ERROR }
 
       context "when purchase has an active dispute" do
         before do
@@ -851,26 +852,44 @@ describe "PurchaseRefunds", :vcr do
           purchase.reload
         end
 
-        it "blocks the refund and does not call the charge processor" do
+        it "blocks a full refund and does not call the charge processor" do
           expect(ChargeProcessor).not_to receive(:refund!)
 
-          result = purchase.refund_and_save!(create(:admin_user).id)
+          result = purchase.refund_and_save!(admin.id)
 
           expect(result).to eq(false)
-          expect(purchase.errors[:base]).to include("This purchase has an active dispute. The funds have already been returned to the buyer. No additional refund is needed.")
+          expect(purchase.errors[:base]).to include(expected_error)
         end
 
-        it "blocks partial refunds via refund!" do
+        it "blocks a partial refund with the dispute error rather than an amount error" do
           expect(ChargeProcessor).not_to receive(:refund!)
 
-          result = purchase.refund!(refunding_user_id: create(:admin_user).id, amount: purchase.price_cents)
+          result = purchase.refund!(refunding_user_id: admin.id, amount: purchase.price_cents)
 
           expect(result).to eq(false)
-          expect(purchase.errors[:base]).to include("This purchase has an active dispute. The funds have already been returned to the buyer. No additional refund is needed.")
+          expect(purchase.errors[:base]).to include(expected_error)
+          expect(purchase.errors[:base]).not_to include("Refund amount cannot be greater than the purchase price.")
+        end
+
+        it "blocks a VAT-only refund via refund_gumroad_taxes!" do
+          purchase.update!(gumroad_tax_cents: 20, total_transaction_cents: purchase.price_cents + 20)
+
+          expect(ChargeProcessor).not_to receive(:refund!)
+
+          result = purchase.refund_gumroad_taxes!(refunding_user_id: admin.id)
+
+          expect(result).to eq(false)
+          expect(purchase.errors[:base]).to include(expected_error)
+        end
+
+        it "does not decrement the seller balance when a refund is attempted" do
+          expect(purchase).not_to receive(:decrement_balance_for_refund_or_chargeback!)
+
+          purchase.refund_and_save!(admin.id)
         end
       end
 
-      context "when dispute has been reversed" do
+      context "when dispute has been reversed (seller won)" do
         before do
           Purchase.handle_charge_event(charge_event_dispute)
           purchase.reload
@@ -878,15 +897,15 @@ describe "PurchaseRefunds", :vcr do
           purchase.reload
         end
 
-        it "allows the refund" do
+        it "allows a refund because the dispute is no longer active" do
           expect(ChargeProcessor).to receive(:refund!).and_call_original
 
-          purchase.refund_and_save!(create(:admin_user).id)
+          purchase.refund_and_save!(admin.id)
 
           expect(purchase.reload.stripe_refunded).to be(true)
         end
 
-        it "returns the full refundable amount" do
+        it "still exposes the full refundable amount for post-dispute-won refunds" do
           expect(purchase.amount_refundable_cents).to eq(purchase.price_cents)
         end
       end
