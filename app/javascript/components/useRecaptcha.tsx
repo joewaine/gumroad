@@ -1,6 +1,12 @@
 import * as React from "react";
 
 export class RecaptchaCancelledError extends Error {}
+export class RecaptchaTimeoutError extends Error {
+  constructor(message = "reCAPTCHA verification timed out") {
+    super(message);
+    this.name = "RecaptchaTimeoutError";
+  }
+}
 
 const RECAPTCHA_SCRIPT_URL = "https://www.google.com/recaptcha/enterprise.js?render=explicit";
 const RECAPTCHA_TIMEOUT_MS = 10000;
@@ -60,15 +66,15 @@ export function useRecaptcha({ siteKey }: { siteKey: string | null }) {
       .catch(() => {});
   }, [siteKey]);
 
-  const execute = () => {
+  const execute = (options: { action?: string } = {}) => {
     const widgetId = recaptchaId.current;
     if (widgetId === null) return Promise.reject(new RecaptchaCancelledError());
     grecaptcha.enterprise.reset(widgetId);
-    void grecaptcha.enterprise.execute(widgetId);
+    void grecaptcha.enterprise.execute(widgetId, options.action ? { action: options.action } : undefined);
     return new Promise<string>((resolve, reject) => {
       const timeout = setTimeout(() => {
         resolveRef.current = null;
-        reject(new RecaptchaCancelledError());
+        reject(new RecaptchaTimeoutError());
       }, RECAPTCHA_TIMEOUT_MS);
       resolveRef.current = (response) => {
         clearTimeout(timeout);

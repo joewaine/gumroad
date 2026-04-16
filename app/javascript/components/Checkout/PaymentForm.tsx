@@ -62,7 +62,7 @@ import { Radio } from "$app/components/ui/Radio";
 import { Select } from "$app/components/ui/Select";
 import { useIsDarkTheme } from "$app/components/useIsDarkTheme";
 import { useOnChangeSync } from "$app/components/useOnChange";
-import { RecaptchaCancelledError, useRecaptcha } from "$app/components/useRecaptcha";
+import { RecaptchaCancelledError, RecaptchaTimeoutError, useRecaptcha } from "$app/components/useRecaptcha";
 import { useRefToLatest } from "$app/components/useRefToLatest";
 import { useRunOnce } from "$app/components/useRunOnce";
 
@@ -1232,10 +1232,14 @@ export const PaymentForm = ({
         dispatch({ type: "set-recaptcha-response" });
       } else {
         recaptcha
-          .execute()
+          .execute({ action: "checkout" })
           .then((recaptchaResponse) => dispatch({ type: "set-recaptcha-response", recaptchaResponse }))
           .catch((e: unknown) => {
-            assert(e instanceof RecaptchaCancelledError);
+            if (e instanceof RecaptchaTimeoutError) {
+              showAlert("reCAPTCHA verification timed out. Please try again.", "error");
+            } else {
+              assert(e instanceof RecaptchaCancelledError);
+            }
             dispatch({ type: "cancel" });
           });
       }

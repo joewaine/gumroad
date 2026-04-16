@@ -8,7 +8,7 @@ import { showAlert } from "$app/components/server-components/Alert";
 import { SupportSlaMessage } from "$app/components/support/SupportSlaMessage";
 import { Input } from "$app/components/ui/Input";
 import { Textarea } from "$app/components/ui/Textarea";
-import { useRecaptcha, RecaptchaCancelledError } from "$app/components/useRecaptcha";
+import { useRecaptcha, RecaptchaCancelledError, RecaptchaTimeoutError } from "$app/components/useRecaptcha";
 
 export function UnauthenticatedNewTicketModal({
   open,
@@ -39,7 +39,7 @@ export function UnauthenticatedNewTicketModal({
 
     setIsSubmitting(true);
     try {
-      const recaptchaResponse = recaptchaSiteKey ? await executeRecaptcha() : null;
+      const recaptchaResponse = recaptchaSiteKey ? await executeRecaptcha({ action: "support" }) : null;
 
       const response = await request({
         method: "POST",
@@ -61,6 +61,10 @@ export function UnauthenticatedNewTicketModal({
       setSubject("");
       setMessage("");
     } catch (error) {
+      if (error instanceof RecaptchaTimeoutError) {
+        showAlert("reCAPTCHA verification timed out. Please try again.", "error");
+        return;
+      }
       if (error instanceof RecaptchaCancelledError) return;
       assertResponseError(error);
       showAlert(error.message, "error");

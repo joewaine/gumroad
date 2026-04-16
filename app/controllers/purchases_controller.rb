@@ -331,7 +331,7 @@ class PurchasesController < ApplicationController
 
       # Verify reCAPTCHA response
       unless skip_recaptcha?
-        render_error("Sorry, we could not verify the CAPTCHA. Please try again.") unless valid_recaptcha_response_and_hostname?(site_key: GlobalConfig.get("RECAPTCHA_MONEY_SITE_KEY"))
+        render_error("Sorry, we could not verify the CAPTCHA. Please try again.") unless valid_recaptcha_response_and_hostname?(site_key: GlobalConfig.get("RECAPTCHA_MONEY_SITE_KEY"), expected_action: "checkout")
       end
     end
 

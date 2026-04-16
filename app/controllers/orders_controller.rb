@@ -76,7 +76,7 @@ class OrdersController < ApplicationController
       return render_error("Cookies are not enabled on your browser. Please enable cookies and refresh this page before continuing.") if contains_paid_purchase && browser_guid.blank?
 
       # Verify reCAPTCHA response
-      if !skip_recaptcha? && !valid_recaptcha_response_and_hostname?(site_key: GlobalConfig.get("RECAPTCHA_MONEY_SITE_KEY"))
+      if !skip_recaptcha? && !valid_recaptcha_response_and_hostname?(site_key: GlobalConfig.get("RECAPTCHA_MONEY_SITE_KEY"), expected_action: "checkout")
         render_error("Sorry, we could not verify the CAPTCHA. Please try again.")
       end
     end

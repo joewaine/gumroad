@@ -9,11 +9,12 @@ import { SocialAuth } from "$app/components/Authentication/SocialAuth";
 import { Button } from "$app/components/Button";
 import { PasswordInput } from "$app/components/PasswordInput";
 import { Separator } from "$app/components/Separator";
+import { showAlert } from "$app/components/server-components/Alert";
 import { Fieldset, FieldsetTitle } from "$app/components/ui/Fieldset";
 import { Input } from "$app/components/ui/Input";
 import { Label } from "$app/components/ui/Label";
 import { useOriginalLocation } from "$app/components/useOriginalLocation";
-import { RecaptchaCancelledError, useRecaptcha } from "$app/components/useRecaptcha";
+import { RecaptchaCancelledError, RecaptchaTimeoutError, useRecaptcha } from "$app/components/useRecaptcha";
 
 type PageProps = {
   email: string | null;
@@ -61,13 +62,17 @@ function SignupPage() {
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     try {
-      const recaptchaResponse = recaptcha_site_key !== null ? await recaptcha.execute() : null;
+      const recaptchaResponse = recaptcha_site_key !== null ? await recaptcha.execute({ action: "signup" }) : null;
       form.transform((data) => ({
         ...data,
         "g-recaptcha-response": recaptchaResponse,
       }));
       form.post(Routes.signup_path());
     } catch (e) {
+      if (e instanceof RecaptchaTimeoutError) {
+        showAlert("reCAPTCHA verification timed out. Please try again.", "error");
+        return;
+      }
       if (e instanceof RecaptchaCancelledError) return;
       throw e;
     }
