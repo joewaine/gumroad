@@ -1237,8 +1237,8 @@ export const PaymentForm = ({
           .catch((e: unknown) => {
             if (e instanceof RecaptchaTimeoutError) {
               showAlert("reCAPTCHA verification timed out. Please try again.", "error");
-            } else {
-              assert(e instanceof RecaptchaCancelledError);
+            } else if (!(e instanceof RecaptchaCancelledError)) {
+              showAlert("Something went wrong verifying reCAPTCHA. Please try again.", "error");
             }
             dispatch({ type: "cancel" });
           });

@@ -39,8 +39,11 @@ describe ValidateRecaptcha, type: :controller do
   end
 
   describe "#recaptcha_verification_response" do
-    it "returns parsed hash when API returns valid JSON" do
-      stub_recaptcha_response("tokenProperties" => { "valid" => true })
+    it "returns parsed hash when API returns a valid assessment body" do
+      stub_recaptcha_response(
+        "tokenProperties" => { "valid" => true },
+        "riskAnalysis" => { "score" => 0.9 }
+      )
 
       post :default_action, params: { "g-recaptcha-response" => "test_token" }
 
@@ -48,7 +51,7 @@ describe ValidateRecaptcha, type: :controller do
       expect(JSON.parse(response.body)["success"]).to be true
     end
 
-    it "returns empty hash when API returns non-JSON response (HTML error page)" do
+    it "rejects when the API returns a non-JSON response (HTML error page)" do
       stub_recaptcha_response("<html>Error</html>")
 
       post :default_action, params: { "g-recaptcha-response" => "test_token" }
@@ -57,7 +60,7 @@ describe ValidateRecaptcha, type: :controller do
       expect(JSON.parse(response.body)["error"]).to eq("captcha_failed")
     end
 
-    it "returns empty hash when API returns nil parsed response" do
+    it "rejects when the API returns a nil parsed response" do
       stub_recaptcha_response(nil)
 
       post :default_action, params: { "g-recaptcha-response" => "test_token" }
@@ -65,7 +68,7 @@ describe ValidateRecaptcha, type: :controller do
       expect(response).to have_http_status(:unprocessable_entity)
     end
 
-    it "returns empty hash when HTTParty raises an error" do
+    it "rejects when HTTParty raises an error" do
       allow(HTTParty).to receive(:post).and_raise(Net::OpenTimeout.new("execution expired"))
 
       post :default_action, params: { "g-recaptcha-response" => "test_token" }
@@ -78,9 +81,14 @@ describe ValidateRecaptcha, type: :controller do
       captured = nil
       allow(HTTParty).to receive(:post) do |_url, opts|
         captured = JSON.parse(opts[:body])
-        instance_double(HTTParty::Response, parsed_response: { "tokenProperties" => { "valid" => true } }, code: 200).tap do |r|
-          allow(r).to receive(:to_s).and_return("")
-        end
+        instance_double(
+          HTTParty::Response,
+          parsed_response: {
+            "tokenProperties" => { "valid" => true, "action" => "login" },
+            "riskAnalysis" => { "score" => 0.9 }
+          },
+          code: 200
+        ).tap { |r| allow(r).to receive(:to_s).and_return("") }
       end
 
       post :default_action, params: { "g-recaptcha-response" => "test_token", expected_action: "login" }
@@ -92,14 +100,29 @@ describe ValidateRecaptcha, type: :controller do
       captured = nil
       allow(HTTParty).to receive(:post) do |_url, opts|
         captured = JSON.parse(opts[:body])
-        instance_double(HTTParty::Response, parsed_response: { "tokenProperties" => { "valid" => true } }, code: 200).tap do |r|
-          allow(r).to receive(:to_s).and_return("")
-        end
+        instance_double(
+          HTTParty::Response,
+          parsed_response: {
+            "tokenProperties" => { "valid" => true },
+            "riskAnalysis" => { "score" => 0.9 }
+          },
+          code: 200
+        ).tap { |r| allow(r).to receive(:to_s).and_return("") }
       end
 
       post :default_action, params: { "g-recaptcha-response" => "test_token" }
 
       expect(captured["event"]).not_to have_key("expectedAction")
+    end
+
+    it "does not log the raw token or assessment response body" do
+      stub_recaptcha_response(
+        "tokenProperties" => { "valid" => true },
+        "riskAnalysis" => { "score" => 0.9 }
+      )
+      expect(Rails.logger).not_to receive(:info)
+
+      post :default_action, params: { "g-recaptcha-response" => "secret-token-value" }
     end
   end
 
@@ -140,79 +163,110 @@ describe ValidateRecaptcha, type: :controller do
       expect(JSON.parse(response.body)["success"]).to be true
     end
 
-    it "accepts requests when riskAnalysis is absent and logs a warning" do
+    it "rejects requests when riskAnalysis is absent (fail closed)" do
       stub_recaptcha_response("tokenProperties" => { "valid" => true })
-      expect(Rails.logger).to receive(:warn).with(a_string_including("missing riskAnalysis"))
 
       post :default_action, params: { "g-recaptcha-response" => "test_token" }
 
-      expect(response).to have_http_status(:ok)
-      expect(JSON.parse(response.body)["success"]).to be true
+      expect(response).to have_http_status(:unprocessable_entity)
+    end
+
+    it "rejects requests when the score is missing from riskAnalysis" do
+      stub_recaptcha_response(
+        "tokenProperties" => { "valid" => true },
+        "riskAnalysis" => { "reasons" => [] }
+      )
+
+      post :default_action, params: { "g-recaptcha-response" => "test_token" }
+
+      expect(response).to have_http_status(:unprocessable_entity)
+    end
+
+    it "rejects requests when the score is not numeric" do
+      stub_recaptcha_response(
+        "tokenProperties" => { "valid" => true },
+        "riskAnalysis" => { "score" => "not-a-number" }
+      )
+
+      post :default_action, params: { "g-recaptcha-response" => "test_token" }
+
+      expect(response).to have_http_status(:unprocessable_entity)
     end
   end
 
-  describe "configurable threshold" do
-    it "reads RECAPTCHA_SCORE_THRESHOLD from GlobalConfig for the default helper" do
-      allow(GlobalConfig).to receive(:get).and_call_original
-      allow(GlobalConfig).to receive(:get).with("RECAPTCHA_SCORE_THRESHOLD").and_return("0.8")
-
+  describe "configurable per-action thresholds" do
+    it "applies a stricter default threshold for the checkout action" do
       stub_recaptcha_response(
-        "tokenProperties" => { "valid" => true },
+        "tokenProperties" => { "valid" => true, "action" => "checkout" },
         "riskAnalysis" => { "score" => 0.6 }
       )
 
-      post :default_action, params: { "g-recaptcha-response" => "test_token" }
+      post :default_action, params: { "g-recaptcha-response" => "test_token", expected_action: "checkout" }
 
       expect(response).to have_http_status(:unprocessable_entity)
     end
 
-    it "falls back to the default when the configured threshold is not a number" do
-      allow(GlobalConfig).to receive(:get).and_call_original
-      allow(GlobalConfig).to receive(:get).with("RECAPTCHA_SCORE_THRESHOLD").and_return("not-a-number")
-      expect(Rails.logger).to receive(:error).with(a_string_including("Invalid RECAPTCHA_SCORE_THRESHOLD"))
-
+    it "accepts the checkout action at the checkout threshold" do
       stub_recaptcha_response(
-        "tokenProperties" => { "valid" => true },
-        "riskAnalysis" => { "score" => 0.9 }
+        "tokenProperties" => { "valid" => true, "action" => "checkout" },
+        "riskAnalysis" => { "score" => ValidateRecaptcha::SCORE_THRESHOLDS_BY_ACTION["checkout"] }
       )
 
-      post :default_action, params: { "g-recaptcha-response" => "test_token" }
+      post :default_action, params: { "g-recaptcha-response" => "test_token", expected_action: "checkout" }
 
       expect(response).to have_http_status(:ok)
     end
 
-    it "applies a stricter default threshold for checkout flows" do
+    it "applies a more lenient default threshold for the support action" do
       stub_recaptcha_response(
-        "tokenProperties" => { "valid" => true, "hostname" => DOMAIN },
-        "riskAnalysis" => { "score" => 0.6 }
+        "tokenProperties" => { "valid" => true, "action" => "support" },
+        "riskAnalysis" => { "score" => ValidateRecaptcha::SCORE_THRESHOLDS_BY_ACTION["support"] }
       )
 
-      post :checkout_action, params: { "g-recaptcha-response" => "test_token" }
-
-      expect(response).to have_http_status(:unprocessable_entity)
-    end
-
-    it "accepts checkout flows at the checkout threshold" do
-      stub_recaptcha_response(
-        "tokenProperties" => { "valid" => true, "hostname" => DOMAIN },
-        "riskAnalysis" => { "score" => ValidateRecaptcha::CHECKOUT_RECAPTCHA_SCORE_THRESHOLD }
-      )
-
-      post :checkout_action, params: { "g-recaptcha-response" => "test_token" }
+      post :default_action, params: { "g-recaptcha-response" => "test_token", expected_action: "support" }
 
       expect(response).to have_http_status(:ok)
     end
 
-    it "reads RECAPTCHA_CHECKOUT_SCORE_THRESHOLD from GlobalConfig for the checkout helper" do
+    it "reads RECAPTCHA_CHECKOUT_SCORE_THRESHOLD from GlobalConfig" do
       allow(GlobalConfig).to receive(:get).and_call_original
       allow(GlobalConfig).to receive(:get).with("RECAPTCHA_CHECKOUT_SCORE_THRESHOLD").and_return("0.9")
 
       stub_recaptcha_response(
-        "tokenProperties" => { "valid" => true, "hostname" => DOMAIN },
+        "tokenProperties" => { "valid" => true, "action" => "checkout" },
         "riskAnalysis" => { "score" => 0.85 }
       )
 
-      post :checkout_action, params: { "g-recaptcha-response" => "test_token" }
+      post :default_action, params: { "g-recaptcha-response" => "test_token", expected_action: "checkout" }
+
+      expect(response).to have_http_status(:unprocessable_entity)
+    end
+
+    it "falls back to the action default when the configured threshold is not a number" do
+      allow(GlobalConfig).to receive(:get).and_call_original
+      allow(GlobalConfig).to receive(:get).with("RECAPTCHA_LOGIN_SCORE_THRESHOLD").and_return("not-a-number")
+      expect(Rails.logger).to receive(:error).with(a_string_including("RECAPTCHA_LOGIN_SCORE_THRESHOLD"))
+
+      stub_recaptcha_response(
+        "tokenProperties" => { "valid" => true, "action" => "login" },
+        "riskAnalysis" => { "score" => 0.9 }
+      )
+
+      post :default_action, params: { "g-recaptcha-response" => "test_token", expected_action: "login" }
+
+      expect(response).to have_http_status(:ok)
+    end
+
+    it "clamps values above 1.0 to the allowed range" do
+      allow(GlobalConfig).to receive(:get).and_call_original
+      allow(GlobalConfig).to receive(:get).with("RECAPTCHA_LOGIN_SCORE_THRESHOLD").and_return("5.0")
+
+      stub_recaptcha_response(
+        "tokenProperties" => { "valid" => true, "action" => "login" },
+        "riskAnalysis" => { "score" => 0.99 }
+      )
+
+      post :default_action, params: { "g-recaptcha-response" => "test_token", expected_action: "login" }
 
       expect(response).to have_http_status(:unprocessable_entity)
     end
@@ -242,13 +296,24 @@ describe ValidateRecaptcha, type: :controller do
       expect(response).to have_http_status(:ok)
     end
 
-    it "accepts legacy tokens that omit the action field" do
+    it "rejects tokens that omit the action field when an expected_action is required" do
       stub_recaptcha_response(
         "tokenProperties" => { "valid" => true },
         "riskAnalysis" => { "score" => 0.9 }
       )
 
       post :default_action, params: { "g-recaptcha-response" => "test_token", expected_action: "signup" }
+
+      expect(response).to have_http_status(:unprocessable_entity)
+    end
+
+    it "does not enforce action matching when no expected_action is provided" do
+      stub_recaptcha_response(
+        "tokenProperties" => { "valid" => true, "action" => "login" },
+        "riskAnalysis" => { "score" => 0.9 }
+      )
+
+      post :default_action, params: { "g-recaptcha-response" => "test_token" }
 
       expect(response).to have_http_status(:ok)
     end
@@ -262,22 +327,22 @@ describe ValidateRecaptcha, type: :controller do
 
       it "accepts tokens from the primary domain" do
         stub_recaptcha_response(
-          "tokenProperties" => { "valid" => true, "hostname" => DOMAIN },
+          "tokenProperties" => { "valid" => true, "hostname" => DOMAIN, "action" => "checkout" },
           "riskAnalysis" => { "score" => 0.9 }
         )
 
-        post :checkout_action, params: { "g-recaptcha-response" => "test_token" }
+        post :checkout_action, params: { "g-recaptcha-response" => "test_token", expected_action: "checkout" }
 
         expect(response).to have_http_status(:ok)
       end
 
       it "accepts tokens from subdomains of the root domain" do
         stub_recaptcha_response(
-          "tokenProperties" => { "valid" => true, "hostname" => "store.#{ROOT_DOMAIN}" },
+          "tokenProperties" => { "valid" => true, "hostname" => "store.#{ROOT_DOMAIN}", "action" => "checkout" },
           "riskAnalysis" => { "score" => 0.9 }
         )
 
-        post :checkout_action, params: { "g-recaptcha-response" => "test_token" }
+        post :checkout_action, params: { "g-recaptcha-response" => "test_token", expected_action: "checkout" }
 
         expect(response).to have_http_status(:ok)
       end
@@ -285,46 +350,46 @@ describe ValidateRecaptcha, type: :controller do
       it "accepts tokens from registered custom domains" do
         custom_domain_host = "shop.example.com"
         stub_recaptcha_response(
-          "tokenProperties" => { "valid" => true, "hostname" => custom_domain_host },
+          "tokenProperties" => { "valid" => true, "hostname" => custom_domain_host, "action" => "checkout" },
           "riskAnalysis" => { "score" => 0.9 }
         )
         allow(CustomDomain).to receive(:find_by_host).with(custom_domain_host).and_return(instance_double(CustomDomain))
 
-        post :checkout_action, params: { "g-recaptcha-response" => "test_token" }
+        post :checkout_action, params: { "g-recaptcha-response" => "test_token", expected_action: "checkout" }
 
         expect(response).to have_http_status(:ok)
       end
 
       it "rejects tokens from unrecognized hostnames" do
         stub_recaptcha_response(
-          "tokenProperties" => { "valid" => true, "hostname" => "malicious.example.net" },
+          "tokenProperties" => { "valid" => true, "hostname" => "malicious.example.net", "action" => "checkout" },
           "riskAnalysis" => { "score" => 0.9 }
         )
         allow(CustomDomain).to receive(:find_by_host).with("malicious.example.net").and_return(nil)
 
-        post :checkout_action, params: { "g-recaptcha-response" => "test_token" }
+        post :checkout_action, params: { "g-recaptcha-response" => "test_token", expected_action: "checkout" }
 
         expect(response).to have_http_status(:unprocessable_entity)
       end
 
       it "rejects tokens with a missing hostname instead of raising" do
         stub_recaptcha_response(
-          "tokenProperties" => { "valid" => true },
+          "tokenProperties" => { "valid" => true, "action" => "checkout" },
           "riskAnalysis" => { "score" => 0.9 }
         )
 
-        post :checkout_action, params: { "g-recaptcha-response" => "test_token" }
+        post :checkout_action, params: { "g-recaptcha-response" => "test_token", expected_action: "checkout" }
 
         expect(response).to have_http_status(:unprocessable_entity)
       end
 
       it "rejects tokens below the checkout score threshold even from valid domains" do
         stub_recaptcha_response(
-          "tokenProperties" => { "valid" => true, "hostname" => DOMAIN },
-          "riskAnalysis" => { "score" => 0.4 }
+          "tokenProperties" => { "valid" => true, "hostname" => DOMAIN, "action" => "checkout" },
+          "riskAnalysis" => { "score" => 0.6 }
         )
 
-        post :checkout_action, params: { "g-recaptcha-response" => "test_token" }
+        post :checkout_action, params: { "g-recaptcha-response" => "test_token", expected_action: "checkout" }
 
         expect(response).to have_http_status(:unprocessable_entity)
       end
