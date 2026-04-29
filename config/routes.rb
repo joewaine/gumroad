@@ -995,6 +995,7 @@ Rails.application.routes.draw do
         end
 
         resources :ai_product_details_generations, only: [:create]
+        resources :transcriptions, only: [:create]
       end
     end
 

@@ -284,6 +284,13 @@ class Rack::Attack
                             requests: 10,
                             period: 60.seconds
 
+  # Throttle voice transcription requests
+  # 20 requests per 60 seconds (per IP)
+  throttle_by_ip_for_period path: "/internal/transcriptions",
+                            method: :post,
+                            requests: 20,
+                            period: 60.seconds
+
   # Throttle ACME challenge requests
   # 120 requests per 60 seconds (per IP)
   throttle_by_ip_for_period path: /\A\/\.well-known\/acme-challenge\//,
