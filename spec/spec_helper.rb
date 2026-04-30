@@ -10,6 +10,7 @@ require "capybara/rspec"
 require "rspec/rails"
 require "paper_trail/frameworks/rspec"
 require "pundit/rspec"
+require "faker"
 Dir.glob(Rails.root.join("spec", "support", "**", "*.rb")).each { |f| require f }
 
 JsonMatchers.schema_root = "spec/support/schemas"
@@ -550,8 +551,6 @@ def stub_pwned_password_check
 end
 
 def stub_webmock
-  WebMock.stub_request(:post, %r{iffy-live\.gumroad\.com/people/buyer_info})
-      .with(body: "{\"require_zip\": false}", headers: { status: %w[200 OK], content_type: "application/json" })
   stub_pwned_password_check
 end
 

@@ -6,12 +6,12 @@ class OfferCode < ApplicationRecord
   include FlagShihTzu
   include ExternalId
   include CurrencyHelper
-  include Mongoable
   include Deletable
   include MaxPurchaseCount
   include OfferCode::Sorting
 
   has_flags 1 => :is_cancellation_discount,
+            2 => :created_via_cli,
             :column => "flags",
             :flag_query_mode => :bit_operator,
             check_for_column: false
@@ -35,7 +35,6 @@ class OfferCode < ApplicationRecord
   validate :validate_cancellation_discount_product_type
   validate :validate_not_used_as_default_discount
 
-  before_save :to_mongo
 
   after_save :invalidate_product_cache
   after_save :reindex_associated_products
@@ -155,6 +154,14 @@ class OfferCode < ApplicationRecord
 
   def times_used
     purchases.counts_towards_offer_code_uses.sum(:quantity)
+  end
+
+  def auto_delete_if_single_use_exhausted!
+    return unless max_purchase_count == 1
+    return if deleted?
+    return if quantity_left > 0
+
+    mark_deleted!
   end
 
   def time_fields

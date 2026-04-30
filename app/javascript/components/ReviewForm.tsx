@@ -18,7 +18,7 @@ import { showAlert } from "$app/components/server-components/Alert";
 import { Alert } from "$app/components/ui/Alert";
 import { Label } from "$app/components/ui/Label";
 import { Tab, Tabs } from "$app/components/ui/Tabs";
-import { Textarea } from "$app/components/ui/Textarea";
+import { VoiceTextarea } from "$app/components/ui/VoiceTextarea";
 
 export type Review = {
   rating: number;
@@ -275,11 +275,13 @@ export const ReviewForm = React.forwardRef<
     const textReview = viewing ? (
       <div className="w-full">{message ? `"${message}"` : "No written review"}</div>
     ) : (
-      <Textarea
+      <VoiceTextarea
         id={uid}
         value={message}
         onChange={(evt) => setMessage(evt.target.value)}
-        placeholder="Want to leave a written review?"
+        onTranscript={(text) => setMessage((prev) => (prev.trim() ? `${prev.replace(/\s+$/u, "")} ${text}` : text))}
+        placeholder="Want to leave a written review? Type or tap the mic."
+        voiceLabel="Speak your review"
         disabled={disabled}
         ref={ref}
       />

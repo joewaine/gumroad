@@ -3,7 +3,7 @@
 class Rack::Attack
   redis_url    = ENV.fetch("RACK_ATTACK_REDIS_HOST")
   redis_client = Redis.new(url: "redis://#{redis_url}")
-  Rack::Attack.cache.store = Rack::Attack::StoreProxy::RedisStoreProxy.new(redis_client)
+  Rack::Attack.cache.store = Rack::Attack::StoreProxy::RedisProxy.new(redis_client)
 
   class Request < ::Rack::Request
     # When the server is behind a load balancer
@@ -282,6 +282,13 @@ class Rack::Attack
   throttle_by_ip_for_period path: "/internal/ai_product_details_generations",
                             method: :post,
                             requests: 10,
+                            period: 60.seconds
+
+  # Throttle voice transcription requests
+  # 20 requests per 60 seconds (per IP)
+  throttle_by_ip_for_period path: "/internal/transcriptions",
+                            method: :post,
+                            requests: 20,
                             period: 60.seconds
 
   # Throttle ACME challenge requests

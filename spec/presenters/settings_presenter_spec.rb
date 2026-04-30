@@ -15,7 +15,7 @@ describe SettingsPresenter do
     context "with owner as logged in user" do
       it "returns correct pages" do
         expect(presenter.pages).to eq(
-          %w(main profile team payments password third_party_analytics advanced)
+          %w(main profile team payments billing password third_party_analytics advanced)
         )
       end
 
@@ -319,7 +319,7 @@ describe SettingsPresenter do
   end
 
   describe "#password_props" do
-    let(:settings_pages) { %w(main profile team payments password third_party_analytics advanced) }
+    let(:settings_pages) { %w(main profile team payments billing password third_party_analytics advanced) }
 
     context "when seller is registered using a social provider" do
       before do
@@ -359,7 +359,7 @@ describe SettingsPresenter do
                                                                   scopes: oauth_application1.scopes,
                                                                   id: oauth_application1.external_id,
                                                                 }],
-                                                                settings_pages: %w(main profile team payments authorized_applications password third_party_analytics advanced),
+                                                                settings_pages: %w(main profile team payments billing authorized_applications password third_party_analytics advanced),
                                                               })
       end
     end
@@ -382,7 +382,7 @@ describe SettingsPresenter do
                                                                   scopes: oauth_application1.scopes,
                                                                   id: oauth_application1.external_id,
                                                                 }],
-                                                                settings_pages: %w(main profile team payments authorized_applications password third_party_analytics advanced),
+                                                                settings_pages: %w(main profile team payments billing authorized_applications password third_party_analytics advanced),
                                                               })
       end
     end
@@ -419,7 +419,7 @@ describe SettingsPresenter do
                                                                 scopes: oauth_application1.scopes,
                                                                 id: oauth_application1.external_id,
                                                               }],
-                                                              settings_pages: %w(main profile team payments authorized_applications password third_party_analytics advanced),
+                                                              settings_pages: %w(main profile team payments billing authorized_applications password third_party_analytics advanced),
                                                             })
     end
   end
@@ -715,7 +715,7 @@ describe SettingsPresenter do
         expect(presenter.payments_props).to eq(@base_us_props)
         expect(presenter.payments_props[:paypal_connect][:allow_paypal_connect]).to be false
 
-        seller.mark_compliant!(author_name: "Iffy")
+        seller.mark_compliant!(author_name: "ContentModeration")
         allow_any_instance_of(User).to receive(:sales_cents_total).and_return(100_00)
         create(:payment_completed, user: seller)
 
@@ -736,7 +736,7 @@ describe SettingsPresenter do
 
       it "returns correct props when seller has a bank account and a PayPal Connect account", :vcr do
         active_bank_account = create(:ach_account, user: seller)
-        seller.mark_compliant!(author_name: "Iffy")
+        seller.mark_compliant!(author_name: "ContentModeration")
         allow_any_instance_of(User).to receive(:sales_cents_total).and_return(100_00)
         create(:payment_completed, user: seller)
         paypal_connect_account = create(:merchant_account_paypal, user: seller, charge_processor_merchant_id: "B66YJBBNCRW6L", charge_processor_verified_at: Time.current)

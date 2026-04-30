@@ -4,8 +4,6 @@ class Admin::UsersController < Admin::BaseController
   include Admin::FetchUser
   include MassTransferPurchases
 
-  skip_before_action :require_admin!, if: :request_from_iffy?, only: %i[suspend_for_fraud_from_iffy mark_compliant_from_iffy flag_for_explicit_nsfw_tos_violation_from_iffy]
-
   before_action :fetch_user, except: %i[block_ip_address]
 
   def show
@@ -122,13 +120,6 @@ class Admin::UsersController < Admin::BaseController
     render json: { success: transfer[:success], message: transfer[:message] }, status: transfer[:status]
   end
 
-  def mark_compliant_from_iffy
-    @user.mark_compliant!(author_name: "iffy")
-    render json: { success: true }
-  rescue => e
-    render json: { success: false, message: e.message }
-  end
-
   def suspend_for_fraud
     unless @user.suspended?
       @user.suspend_for_fraud!(author_id: current_user.id)
@@ -148,19 +139,13 @@ class Admin::UsersController < Admin::BaseController
     render json: { success: false, message: e.message }
   end
 
-  def suspend_for_fraud_from_iffy
-    @user.flag_for_fraud!(author_name: "iffy") unless @user.flagged_for_fraud? || @user.on_probation? || @user.suspended?
-    @user.suspend_for_fraud!(author_name: "iffy") unless @user.suspended?
-    render json: { success: true }
-  rescue => e
-    render json: { success: false, message: e.message }
-  end
+  def schedule_payout
+    return render json: { success: false, message: "User is not suspended." }, status: :unprocessable_content unless @user.suspended?
 
-  def flag_for_explicit_nsfw_tos_violation_from_iffy
-    @user.flag_for_explicit_nsfw_tos_violation!(author_name: "iffy") unless @user.flagged_for_explicit_nsfw?
+    create_scheduled_payout_if_requested
     render json: { success: true }
   rescue => e
-    render json: { success: false, message: e.message }
+    render json: { success: false, message: e.message }, status: :unprocessable_content
   end
 
   def flag_for_fraud
@@ -205,10 +190,25 @@ class Admin::UsersController < Admin::BaseController
 
   def set_custom_fee
     custom_fee_per_thousand = params[:custom_fee_percent].present? ? (params[:custom_fee_percent].to_f * 10).round : nil
-    @user.update!(custom_fee_per_thousand:)
+    @user.custom_fee_per_thousand = custom_fee_per_thousand
+    @user.save!
     render json: { success: true }
   rescue ActiveRecord::RecordInvalid => e
     render json: { success: false, message: e.message }, status: :unprocessable_content
+  end
+
+  def gdpr_erase
+    result = GdprDataErasureService.new(@user, performed_by: current_user).perform!
+
+    if result[:success]
+      render json: {
+        success: true,
+        message: "GDPR erasure complete. External cleanup still needed: Helper/Supabase, Gmail, Stripe.",
+        summary: result[:summary]
+      }
+    else
+      render json: { success: false, message: result[:error] }
+    end
   end
 
   def toggle_adult_products

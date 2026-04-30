@@ -14,7 +14,7 @@ Explain the reasoning behind your changes, not just the change itself. Describe 
 - Include an AI disclosure
 - Self-review (comment) on your code
 - Break up big 1k+ line PRs into smaller PRs (100 loc)
-- Include video of before/after with light/dark mode and mobile/desktop experiences represented.
+- **Must**: Include a video for every PR. For user-facing changes, show before/after with light/dark mode and mobile/desktop. For non-user-facing changes, record a short walkthrough of the relevant existing functionality to demonstrate understanding and confirm nothing broke.
 - Include updates to any tests, especially end-to-end tests!
 - Deploy the app to a preview URL and include QA steps
 
@@ -24,10 +24,14 @@ Non-trivial PRs should follow this structure:
 
 - **What** — What this PR does. Concrete changes, not a list of files.
 - **Why** — Why this change exists and why this approach was chosen over alternatives.
-- **Before/After** — Screenshots or video for UI/CSS changes only. Include desktop and mobile, light and dark mode.
+- **Before/After** — Video is required for all PRs. For user-facing changes, show before/after with desktop and mobile, light and dark mode. For non-user-facing changes, include a short video walking through the relevant existing functionality.
 - **Test Results** — Screenshot of tests passing locally.
 
 End with an AI disclosure after a `---` separator. Name the specific model (e.g., "Claude Opus 4.6") and list the prompts given to the agent.
+
+## AI models
+
+Use the latest and greatest state-of-the-art models from American AI companies like [Anthropic](https://www.anthropic.com/) and [OpenAI](https://openai.com/). As of this writing, that means Claude Opus 4.6 and GPT-5.4, but always check for the newest releases. Don't settle for last-gen models when better ones are available.
 
 ## Development guidelines
 
@@ -41,10 +45,33 @@ End with an AI disclosure after a `---` separator. Name the specific model (e.g.
 - Use factories for test data instead of creating objects directly
 - Tests must fail when the fix is reverted. If the test passes without the application code change, it is invalid.
 - Scope VCR cassettes to specific test files. Sharing cassettes across tests causes collisions where tests read incorrect cached responses.
+- When your code change causes a spec to follow a new HTTP code path (e.g., removing a guard clause, adding a new API call), run the spec locally to regenerate VCR cassettes. Do not stub external APIs to work around missing cassettes. See [VCR Cassettes](#vcr-cassettes) in docs/testing.md.
 - Don't start Rspec test names with "should". See https://www.betterspecs.org/#should
 - Use `@example.com` for emails in tests
 - Use `example.com`, `example.org`, and `example.net` as custom domains or request hosts in tests.
 - Avoid `to_not have_enqueued_sidekiq_job` or `not_to have_enqueued_sidekiq_job` because they're prone to false positives. Make assertions on `SidekiqWorkerName.jobs.size` instead.
+
+### Before pushing
+
+Run **test-confidence** before every commit:
+
+```bash
+bin/test-confidence          # Run to 99%, stop
+bin/test-confidence --full   # Run to 100%
+```
+
+Requires `ANTHROPIC_API_KEY`. Opus 4.7 analyzes your diff in one call: decides the risk level, picks which tests to run, sets the order, and determines how many tests are needed for each confidence milestone. A comment-only change might need 2 tests for 99%. A payment model refactor might need 100. The AI decides the curve shape ad hoc per diff.
+
+The bar is yellow while running toward 99%, then turns green. At green, safe to commit. Also works as a Claude Code skill: `/test-confidence`
+
+Also lint before committing:
+
+```bash
+bundle exec rubocop -a              # Ruby lint + auto-correct
+DISABLE_TYPE_CHECKED=1 npx eslint   # JS/TS lint
+```
+
+Do not push code with failing tests. CI is not a substitute for local verification. Fix any issues before committing.
 
 ### Code standards
 
@@ -77,6 +104,7 @@ End with an AI disclosure after a `---` separator. Name the specific model (e.g.
 
 - When creating financial records (receipts, sales), copy the specific values (amount, currency, percentage) at the time of purchase instead of referencing mutable data like a `DiscountCode` ID. This ensures historical records remain accurate if the original object is edited or deleted.
 - Do not use database-level foreign key constraints (`add_foreign_key`). Avoiding hard constraints simplifies data migration and sharding operations at scale.
+- **Do not add, remove, or rename columns on the `users` or `purchases` tables.** These tables are too large for schema changes. Migrations that alter their schema will block deployments. If you need new data associated with users or purchases, create a new table and reference it. This also applies to adding or removing indexes on these tables.
 - Do not use dynamic string interpolation for Tailwind class names (e.g., `` `text-${color}` ``). Tailwind scanners cannot detect these during build. Use full class names or a lookup map.
 - Prefer re-using deprecated boolean flags (https://github.com/pboling/flag_shih_tzu) instead of creating new ones. Deprecated flags are named `DEPRECATED_<something>`. To re-use this flag you'll first need to reset the values for it on staging and production and then rename the flag to the new name. You can reset the flag like this:
   ```ruby
@@ -90,7 +118,6 @@ End with an AI disclosure after a `---` separator. Name the specific model (e.g.
 - Use `product` instead of `link` in new code (in variable names, column names, comments, etc.)
 - Use `request` instead of `$.ajax` in new code
 - Use `buyer` and `seller` when naming variables instead of `customer` and `creator`
-- Avoid `unless`
 - Don't create new files in `app/modules/` as it is a legacy location. Prefer creating concerns in the right directory instead (eg: `app/controllers/concerns/`, `app/models/concerns/`, etc.)
 - Do not create methods ending in `_path` or `_url`. They might cause collisions with rails generated named route helpers in the future. Instead, use a module similar to `CustomDomainRouteBuilder`
 - Use Nano IDs to generate external/public IDs for new models.

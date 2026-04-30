@@ -24,6 +24,7 @@
 /config/master.key
 /config/credentials.yml.enc
 /config/certs
+/config/content_moderation_blocklist.yml
 /node_modules
 /public/packs
 /public/packs-test
@@ -63,3 +64,5 @@ docs/ssh.md
 test-branch-creation.log
 .vercel
 .claude/worktrees/
+autoresearch.*
+.codex/

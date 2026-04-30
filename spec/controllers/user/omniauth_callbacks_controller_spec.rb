@@ -40,10 +40,11 @@ describe User::OmniauthCallbacksController do
         user = User.last
         expect(user.email).to eq("stripe.connect@gum.co")
         expect(user.confirmed?).to be true
-        expect(response).to redirect_to two_factor_authentication_path(next: oauth_completions_stripe_path)
+        expect(controller.user_signed_in?).to be true
+        expect(response).to redirect_to safe_redirect_path(oauth_completions_stripe_path)
       end
 
-      it "redirects directly to completion when user has no email" do
+      it "signs in directly when user has no email" do
         request.env["omniauth.auth"]["info"].delete "email"
         request.env["omniauth.auth"]["extra"]["raw_info"].delete "email"
 
@@ -55,13 +56,13 @@ describe User::OmniauthCallbacksController do
         expect(response).to redirect_to safe_redirect_path(oauth_completions_stripe_path)
       end
 
-      it "requires 2FA when user has email" do
+      it "signs in directly when user has email" do
         post :stripe_connect
 
         user = User.last
         expect(user.email).to eq("stripe.connect@gum.co")
-        expect(controller.user_signed_in?).to be false
-        expect(response).to redirect_to two_factor_authentication_path(next: oauth_completions_stripe_path)
+        expect(controller.user_signed_in?).to be true
+        expect(response).to redirect_to safe_redirect_path(oauth_completions_stripe_path)
       end
 
       it "does not create a new user if the email is already taken" do
@@ -69,7 +70,7 @@ describe User::OmniauthCallbacksController do
 
         expect { post :stripe_connect }.not_to change { User.count }
 
-        expect(response).to redirect_to two_factor_authentication_path(next: oauth_completions_stripe_path)
+        expect(response).to redirect_to safe_redirect_path(oauth_completions_stripe_path)
       end
     end
 
@@ -109,13 +110,13 @@ describe User::OmniauthCallbacksController do
 
       include_examples "stripe connect user creation"
 
-      it "does not log in admin user" do
-        create(:merchant_account_stripe_connect, user: create(:admin_user), charge_processor_merchant_id: stripe_uid)
+      it "allows admin user to log in" do
+        admin = create(:admin_user)
+        create(:merchant_account_stripe_connect, user: admin, charge_processor_merchant_id: stripe_uid)
 
         post :stripe_connect
 
-        expect(flash[:alert]).to eq "You're an admin, you can't login with Stripe."
-        expect(response).to redirect_to login_url
+        expect(flash[:alert]).to be_nil
       end
 
       it "does not allow user to login if the account is deleted" do
@@ -147,7 +148,7 @@ describe User::OmniauthCallbacksController do
         expect(user.email).to eq("stripe.connect@gum.co")
         expect(purchase1.reload.purchaser_id).to eq(user.id)
         expect(purchase2.reload.purchaser_id).to eq(user.id)
-        expect(response).to redirect_to two_factor_authentication_path(next: oauth_completions_stripe_path)
+        expect(response).to redirect_to safe_redirect_path(oauth_completions_stripe_path)
       end
     end
 
@@ -172,7 +173,7 @@ describe User::OmniauthCallbacksController do
 
         expect { post :stripe_connect }.not_to change { User.count }
 
-        expect(response).to redirect_to two_factor_authentication_path(next: oauth_completions_stripe_path)
+        expect(response).to redirect_to safe_redirect_path(oauth_completions_stripe_path)
       end
 
       it "allows existing users with matching email (without Stripe connected) to log in" do
@@ -180,7 +181,7 @@ describe User::OmniauthCallbacksController do
 
         expect { post :stripe_connect }.not_to change { User.count }
 
-        expect(response).to redirect_to two_factor_authentication_path(next: oauth_completions_stripe_path)
+        expect(response).to redirect_to safe_redirect_path(oauth_completions_stripe_path)
       end
 
       it "allows existing users without email to log in" do
@@ -230,13 +231,13 @@ describe User::OmniauthCallbacksController do
     end
 
     context "when user is admin" do
-      it "does not allow user to login" do
-        allow(User).to receive(:new).and_return(create(:admin_user))
+      it "allows admin user to log in with Apple" do
+        admin = create(:admin_user)
+        allow(User).to receive(:find_or_create_for_apple_oauth).and_return(admin)
 
         post :apple
 
-        expect(flash[:alert]).to eq "You're an admin, you can't login with Apple."
-        expect(response).to redirect_to login_path
+        expect(flash[:alert]).to be_nil
       end
     end
 
@@ -262,14 +263,16 @@ describe User::OmniauthCallbacksController do
         u
       end
 
-      it "does not allow user to login with Apple only" do
+      it "signs in the user without 2FA" do
         post :apple
-        expect(response).to redirect_to two_factor_authentication_path(next: dashboard_path)
+        expect(controller.user_signed_in?).to be true
+        expect(response).to redirect_to dashboard_path
       end
 
       it "keeps referral intact" do
         post :apple, params: { referer: balance_path }
-        expect(response).to redirect_to two_factor_authentication_path(next: balance_path)
+        expect(controller.user_signed_in?).to be true
+        expect(response).to redirect_to balance_path
       end
     end
 
@@ -331,13 +334,13 @@ describe User::OmniauthCallbacksController do
     end
 
     context "when user is admin" do
-      it "does not allow user to login" do
-        allow(User).to receive(:new).and_return(create(:admin_user))
+      it "allows admin user to log in with Google" do
+        admin = create(:admin_user)
+        allow(User).to receive(:find_or_create_for_google_oauth2).and_return(admin)
 
         post :google_oauth2
 
-        expect(flash[:alert]).to eq "You're an admin, you can't login with Google."
-        expect(response).to redirect_to login_path
+        expect(flash[:alert]).to be_nil
       end
     end
 
@@ -355,39 +358,42 @@ describe User::OmniauthCallbacksController do
     context "when user has 2FA" do
       let!(:user) { create(:user, google_uid: "101656774483284362141", email: "pdragunas@example.com", two_factor_authentication_enabled: true) }
 
-      it "does not allow user to login with Google only" do
+      it "signs in the user without 2FA" do
         post :google_oauth2
-        expect(response).to redirect_to two_factor_authentication_path(next: dashboard_path)
+        expect(controller.user_signed_in?).to be true
+        expect(response).to redirect_to dashboard_path
       end
 
       it "keeps referral intact" do
         request.env["omniauth.origin"] = balance_path
         post :google_oauth2
-        expect(response).to redirect_to two_factor_authentication_path(next: balance_path)
+        expect(controller.user_signed_in?).to be true
+        expect(response).to redirect_to balance_path
       end
 
       it "sanitizes external domain in referral to a relative path" do
         request.env["omniauth.origin"] = "https://evil.com/phishing"
         post :google_oauth2
-        expect(response).to redirect_to two_factor_authentication_path(next: "/phishing")
+        expect(controller.user_signed_in?).to be true
+        expect(response).to redirect_to "/phishing"
       end
     end
 
     context "linking account" do
       it "links google account to existing account", :vcr do
-        @user = create(:user, email: "pdragunas@example.com")
+        user = create(:user, email: "pdragunas@example.com")
 
-        OmniAuth.config.mock_auth[:google] = OmniAuth::AuthHash.new fetch_json("google")
-        request.env["omniauth.auth"] = OmniAuth.config.mock_auth[:google]
-        allow(controller).to receive(:current_user).and_return(@user)
+        OmniAuth.config.mock_auth[:google_oauth2] = OmniAuth::AuthHash.new fetch_json("google")
+        request.env["omniauth.auth"] = OmniAuth.config.mock_auth[:google_oauth2]
+        allow(controller).to receive(:current_user).and_return(user)
 
         post :google_oauth2
 
-        @user.reload
+        user.reload
 
-        expect(@user.name).to eq "Paulius Dragunas"
-        expect(@user.email).to eq "pdragunas@example.com"
-        expect(@user.google_uid).to eq "101656774483284362141"
+        expect(user.name).to eq "Paulius Dragunas"
+        expect(user.email).to eq "pdragunas@example.com"
+        expect(user.google_uid).to eq "101656774483284362141"
       end
     end
 

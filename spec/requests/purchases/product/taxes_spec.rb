@@ -23,6 +23,8 @@ describe("Product Page - Tax Scenarios", type: :system, js: true) do
       el.dispatchEvent(new Event('change', { bubbles: true }));
       el.dispatchEvent(new Event('blur', { bubbles: true }));
     JS
+    # Wait for the debounced surcharge recalculation to complete
+    wait_for_checkout_surcharges_loaded
   end
 
   describe "sales tax", shipping: true, force_vcr_on: true do
@@ -3910,7 +3912,7 @@ describe("Product Page - Tax Scenarios", type: :system, js: true) do
 
       expect(page).to have_select("Country", selected: "Austria")
 
-      fill_in("Your email address", with: "test@test.com")
+      fill_in("Email address", with: "test@test.com")
       fill_in_credit_card
 
       fill_in("Business VAT ID (optional)", with: "NL860999063B01\t")

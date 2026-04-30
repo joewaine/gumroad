@@ -37,8 +37,8 @@ class Link < ApplicationRecord
             28 => :is_collab,
             29 => :is_unpublished_by_admin,
             30 => :community_chat_enabled,
-            31 => :DEPRECATED_excluded_from_mobile_app_discover,
-            32 => :moderated_by_iffy,
+            31 => :created_via_cli,
+            32 => :DEPRECATED_moderated_by_iffy,
             33 => :hide_sold_out_variants,
             :column => "flags",
             :flag_query_mode => :bit_operator,
@@ -48,7 +48,7 @@ class Link < ApplicationRecord
           Product::Validations, Product::Caching, Product::NativeTypeTemplates, Product::Recommendations,
           Product::Prices, Product::Shipping, Product::Searchable, Product::Tags, Product::Taxonomies,
           Product::ReviewStat, Product::Utils, Product::StructuredData, ActionView::Helpers::SanitizeHelper,
-          ActionView::Helpers::NumberHelper, Mongoable, TimestampScopes, ExternalId,
+          ActionView::Helpers::NumberHelper, TimestampScopes, ExternalId,
           WithFileProperties, JsonData, Deletable, WithProductFiles, WithCdnUrl, MaxPurchaseCount,
           Integrations, Product::StaffPicked, RichContents, Product::Sorting, Product::CreationLimit
 
@@ -205,11 +205,14 @@ class Link < ApplicationRecord
   validate :published_bundle_must_have_at_least_one_product, on: :update
   validate :user_is_eligible_for_service_products, on: :create, if: :is_service?
   validate :commission_price_is_valid, if: -> { native_type == Link::NATIVE_TYPE_COMMISSION }
-  validate :one_coffee_per_user, on: :create, if: -> { native_type == Link::NATIVE_TYPE_COFFEE }
+  validate :one_coffee_per_user, if: -> { native_type == Link::NATIVE_TYPE_COFFEE && (new_record? || (archived_changed? && !archived?)) }
   validate :quantity_enabled_state_is_allowed
   validate :default_offer_code_must_be_valid
+  validate :content_moderation_check, if: -> { publishing? || (persisted? && published? && (name_changed? || description_changed?)) }
 
   validates_associated :installment_plan, message: -> (link, _) { link.installment_plan.errors.full_messages.first }
+
+  attr_accessor :publishing
 
   before_save :downcase_filetype
   before_save :remove_xml_tags
@@ -218,8 +221,6 @@ class Link < ApplicationRecord
   after_update :create_licenses_for_existing_customers,
                if: ->(link) { link.saved_change_to_is_licensed? && link.is_licensed? }
   after_update :delete_unused_prices, if: :saved_change_to_purchase_type?
-  after_update :reset_moderated_by_iffy_flag, if: :saved_change_to_description?
-  after_save :queue_iffy_ingest_job_if_unpublished_by_admin
 
   enum subscription_duration: %i[monthly yearly quarterly biannually every_two_years]
   enum purchase_type: %i[buy_only rent_only buy_and_rent] # Indicates whether this product can be bought or rented or both.
@@ -408,16 +409,25 @@ class Link < ApplicationRecord
     enforce_shipping_destinations_presence!
     enforce_user_email_confirmation!
     enforce_merchant_account_exits_for_new_users!
-    if auto_transcode_videos?
-      transcode_videos!
-    else
-      enable_transcode_videos_on_purchase!
-    end
-
     self.purchase_disabled_at = nil
     self.deleted_at = nil
     self.draft = false
-    save!
+    self.publishing = true
+    deadlock_retries = 0
+    begin
+      if auto_transcode_videos?
+        transcode_videos!
+      else
+        enable_transcode_videos_on_purchase!
+      end
+      save!
+    rescue ActiveRecord::Deadlocked
+      deadlock_retries += 1
+      retry if deadlock_retries <= 2
+      raise
+    ensure
+      self.publishing = false
+    end
 
     user.direct_affiliates.alive.apply_to_all_products.each do |affiliate|
       unless affiliate.products.include?(self)
@@ -425,6 +435,10 @@ class Link < ApplicationRecord
         AffiliateMailer.notify_direct_affiliate_of_new_product(affiliate.id, id).deliver_later
       end
     end
+  end
+
+  def publishing?
+    !!publishing
   end
 
   def unpublish!(is_unpublished_by_admin: false)
@@ -556,15 +570,9 @@ class Link < ApplicationRecord
   end
 
   def social_share_text
-    if user.twitter_handle.present?
-      return "I pre-ordered #{name} from @#{user.twitter_handle} on @Gumroad" if is_in_preorder_state
+    return "I pre-ordered #{name} on @Gumroad" if is_in_preorder_state
 
-      "I got #{name} from @#{user.twitter_handle} on @Gumroad"
-    else
-      return "I pre-ordered #{name} on @Gumroad" if is_in_preorder_state
-
-      "I got #{name} on @Gumroad"
-    end
+    "I got #{name} on @Gumroad"
   end
 
   def self.human_attribute_name(attr, _)
@@ -653,6 +661,7 @@ class Link < ApplicationRecord
   end
 
   def sales_count_for_inventory
+    return sales_count_for_inventory_cache if Feature.active?(:inventory_counter_cache)
     sales.counts_towards_inventory.sum(:quantity)
   end
 
@@ -1416,13 +1425,12 @@ class Link < ApplicationRecord
       end
     end
 
-    def reset_moderated_by_iffy_flag
-      update_attribute(:moderated_by_iffy, false)
-    end
+    def content_moderation_check
+      return if user&.vip_creator?
 
-    def queue_iffy_ingest_job_if_unpublished_by_admin
-      return unless is_unpublished_by_admin? && !saved_change_to_is_unpublished_by_admin?
+      result = ContentModeration::ModerateRecordService.check(self, :product)
+      return if result.passed
 
-      Iffy::Product::IngestJob.perform_async(id)
+      errors.add(:base, "Content moderation failed: #{result.reasons.join("; ")}")
     end
 end

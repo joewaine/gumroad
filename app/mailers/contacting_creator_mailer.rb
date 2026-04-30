@@ -145,6 +145,12 @@ class ContactingCreatorMailer < ApplicationMailer
     @subject = "We were unable to verify your bank account."
   end
 
+  def invalid_account_holder_name(user_id)
+    @seller = User.find(user_id)
+    @country_code = @seller.alive_user_compliance_info&.legal_entity_country_code
+    @subject = "Your bank account holder name was rejected."
+  end
+
   def cannot_pay(payment_id)
     @payment = Payment.find(payment_id)
     @seller = @payment.user
@@ -369,6 +375,13 @@ class ContactingCreatorMailer < ApplicationMailer
   def suspended_due_to_stripe_risk(user_id)
     @seller = User.find(user_id)
     @subject = "Your account has been suspended for being high risk"
+  end
+
+  def account_suspended(user_id)
+    @seller = User.find(user_id)
+    @subject = "Your Gumroad account has been suspended"
+    @scheduled_payout = @seller.scheduled_payouts.pending.last
+    @payout_amount = formatted_dollar_amount(@scheduled_payout.payout_amount_cents) if @scheduled_payout
   end
 
   def user_sales_data(user_id, sales_csv_tempfile)

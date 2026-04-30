@@ -268,7 +268,7 @@ class StripePayoutProcessor
     []
   rescue Stripe::InvalidRequestError => e
     failed = true
-    if e.message["Cannot create live transfers"]
+    if e.message["Cannot create live transfers"] || e.message["Cannot create payouts"]
       failure_reason = Payment::FailureReason::CANNOT_PAY
     elsif e.message["Debit card transfers are only supported for amounts less"]
       failure_reason = Payment::FailureReason::DEBIT_CARD_LIMIT
