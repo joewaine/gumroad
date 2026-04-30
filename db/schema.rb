@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2026_11_23_000000) do
+ActiveRecord::Schema[7.1].define(version: 2026_11_24_000000) do
   create_table "active_storage_attachments", charset: "utf8mb4", collation: "utf8mb4_unicode_ci", force: :cascade do |t|
     t.string "name", limit: 191, null: false
     t.string "record_type", limit: 191, null: false
@@ -2518,6 +2518,16 @@ ActiveRecord::Schema[7.1].define(version: 2026_11_23_000000) do
     t.datetime "updated_at", null: false
     t.index ["provider", "uid"], name: "index_user_external_authentications_on_provider_and_uid", unique: true
     t.index ["user_id"], name: "index_user_external_authentications_on_user_id"
+  end
+
+  create_table "user_interests", charset: "utf8mb4", collation: "utf8mb4_unicode_ci", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.bigint "taxonomy_id", null: false
+    t.string "source_text"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["taxonomy_id"], name: "index_user_interests_on_taxonomy_id"
+    t.index ["user_id", "taxonomy_id"], name: "index_user_interests_on_user_id_and_taxonomy_id", unique: true
   end
 
   create_table "user_tax_forms", charset: "utf8mb4", collation: "utf8mb4_unicode_ci", force: :cascade do |t|

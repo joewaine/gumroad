@@ -617,6 +617,11 @@ Rails.application.routes.draw do
     patch "/library/purchase/:id/unarchive", to: "library#unarchive", as: :library_unarchive
     patch "/library/purchase/:id/delete", to: "library#delete", as: :library_delete
 
+    # buyer-declared interests (for "branching out" recommendations)
+    post "/user_interests", to: "user_interests#create", as: :user_interests
+    delete "/user_interests/:id", to: "user_interests#destroy", as: :user_interest
+    get "/user_interests/recommendations", to: "user_interests#recommendations", as: :user_interest_recommendations
+
     # customers
     get "/customers/sales", controller: "customers", action: "customers_paged", format: "json", as: :sales_paged
     get "/customers", controller: "customers", action: "index", format: "html", as: :customers
@@ -995,6 +1000,7 @@ Rails.application.routes.draw do
         end
 
         resources :ai_product_details_generations, only: [:create]
+        resources :transcriptions, only: [:create]
       end
     end
 

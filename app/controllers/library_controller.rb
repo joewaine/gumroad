@@ -23,6 +23,7 @@ class LibraryController < Sellers::BaseController
       bundles:,
       reviews_page_enabled: Feature.active?(:reviews_page, current_seller),
       following_wishlists_enabled: Feature.active?(:follow_wishlists, current_seller),
+      taste_profile: BuyerTasteProfilePresenter.new(logged_in_user).props,
     }
   end
 
