@@ -5,6 +5,7 @@ import * as React from "react";
 import { cast, is } from "ts-safe-cast";
 
 import { deletePurchasedProduct, setPurchaseArchived } from "$app/data/library";
+import { TasteProfile } from "$app/data/user_interests";
 import { ProductNativeType } from "$app/parsers/product";
 import { assertDefined } from "$app/utils/assert";
 import { classNames } from "$app/utils/classNames";
@@ -14,7 +15,9 @@ import { writeQueryParams } from "$app/utils/url";
 
 import { Button } from "$app/components/Button";
 import { useDiscoverUrl } from "$app/components/DomainSettings";
+import { BranchingOutCarousel } from "$app/components/Library/BranchingOutCarousel";
 import { Layout } from "$app/components/Library/Layout";
+import { TasteProfileBanner } from "$app/components/Library/TasteProfileBanner";
 import { Modal } from "$app/components/Modal";
 import { Popover, PopoverContent, PopoverTrigger } from "$app/components/Popover";
 import { AuthorByline } from "$app/components/Product/AuthorByline";
@@ -184,6 +187,7 @@ type Props = {
   bundles: { id: string; label: string }[];
   reviews_page_enabled: boolean;
   following_wishlists_enabled: boolean;
+  taste_profile: TasteProfile;
 };
 
 type Params = {
@@ -253,8 +257,17 @@ const extractParams = (rawParams: URLSearchParams): Params => ({
 });
 
 export default function LibraryPage() {
-  const { results, creators, bundles, reviews_page_enabled, following_wishlists_enabled } = cast<Props>(
+  const { results, creators, bundles, reviews_page_enabled, following_wishlists_enabled, taste_profile } = cast<Props>(
     usePage().props,
+  );
+
+  const [tasteProfile, setTasteProfile] = React.useState<TasteProfile>(taste_profile);
+  const [activeInterestId, setActiveInterestId] = React.useState<number | null>(
+    taste_profile.declared_interests[0]?.id ?? null,
+  );
+  const activeInterest = React.useMemo(
+    () => tasteProfile.declared_interests.find((i) => i.id === activeInterestId) ?? null,
+    [tasteProfile.declared_interests, activeInterestId],
   );
 
   const originalLocation = useOriginalLocation();
@@ -377,6 +390,17 @@ export default function LibraryPage() {
       followingWishlistsEnabled={following_wishlists_enabled}
     >
       <section className="space-y-4 p-4 md:p-8">
+        {state.results.length > 0 ? (
+          <>
+            <TasteProfileBanner
+              profile={tasteProfile}
+              activeInterestId={activeInterestId}
+              onProfileChange={setTasteProfile}
+              onActiveInterestChange={setActiveInterestId}
+            />
+            {activeInterest ? <BranchingOutCarousel taxonomy={activeInterest.taxonomy} /> : null}
+          </>
+        ) : null}
         {state.results.length === 0 || showArchivedNotice ? (
           <Placeholder>
             {state.results.length === 0 ? (

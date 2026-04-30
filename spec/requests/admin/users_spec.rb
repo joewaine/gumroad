@@ -96,15 +96,27 @@ describe "Admin::UsersController Scenario", type: :system, js: true do
       end
     end
 
+    def open_custom_fee_form
+      find_and_click "h3", text: "Custom fee"
+      expect(page).to have_css("#update-custom-fee", wait: 10)
+    end
+
+    def submit_custom_fee_and_wait
+      accept_confirm(wait: 10) { find("#update-custom-fee").click }
+    rescue Capybara::ModalNotFound
+      page.execute_script("window.confirm = function() { return true; }")
+      find("#update-custom-fee").click
+    ensure
+      expect(page).to have_alert(text: /Custom fee updated|Something went wrong/, wait: 15)
+    end
+
     it "allows setting new custom fee" do
       expect(user.reload.custom_fee_per_thousand).to be_nil
 
       visit admin_user_path(user.external_id)
-      find_and_click "h3", text: "Custom fee"
+      open_custom_fee_form
       fill_in "custom_fee_percent", with: "2.5"
-      click_on "Submit"
-      accept_browser_dialog
-      wait_for_ajax
+      submit_custom_fee_and_wait
 
       expect(user.reload.custom_fee_per_thousand).to eq(25)
     end
@@ -114,11 +126,9 @@ describe "Admin::UsersController Scenario", type: :system, js: true do
       expect(user.reload.custom_fee_per_thousand).to eq(50)
 
       visit admin_user_path(user.external_id)
-      find_and_click "h3", text: "Custom fee"
+      open_custom_fee_form
       fill_in "custom_fee_percent", with: "2.5"
-      click_on "Submit"
-      accept_browser_dialog
-      wait_for_ajax
+      submit_custom_fee_and_wait
 
       expect(user.reload.custom_fee_per_thousand).to eq(25)
     end
@@ -128,11 +138,9 @@ describe "Admin::UsersController Scenario", type: :system, js: true do
       expect(user.reload.custom_fee_per_thousand).to eq(75)
 
       visit admin_user_path(user.external_id)
-      find_and_click "h3", text: "Custom fee"
+      open_custom_fee_form
       fill_in "custom_fee_percent", with: ""
-      click_on "Submit"
-      accept_browser_dialog
-      wait_for_ajax
+      submit_custom_fee_and_wait
 
       expect(user.reload.custom_fee_per_thousand).to be_nil
     end
@@ -155,8 +163,7 @@ describe "Admin::UsersController Scenario", type: :system, js: true do
         expect(user.reload.all_adult_products).to be(false)
 
         visit admin_user_path(user.external_id)
-        click_on "Mark as adult"
-        accept_browser_dialog
+        accept_confirm { click_on "Mark as adult" }
         wait_for_ajax
 
         expect(user.reload.all_adult_products).to be(true)
@@ -181,8 +188,7 @@ describe "Admin::UsersController Scenario", type: :system, js: true do
         expect(user.reload.all_adult_products).to be(true)
 
         visit admin_user_path(user.external_id)
-        click_on "Unmark as adult"
-        accept_browser_dialog
+        accept_confirm { click_on "Unmark as adult" }
         wait_for_ajax
 
         expect(user.reload.all_adult_products).to be(false)
@@ -206,8 +212,7 @@ describe "Admin::UsersController Scenario", type: :system, js: true do
 
       it "allows marking user as adult" do
         visit admin_user_path(user.external_id)
-        click_on "Mark as adult"
-        accept_browser_dialog
+        accept_confirm { click_on "Mark as adult" }
         wait_for_ajax
 
         expect(user.reload.all_adult_products).to be(true)
@@ -248,6 +253,34 @@ describe "Admin::UsersController Scenario", type: :system, js: true do
       expect(page).to have_text("Email blocked")
       expect(page).to have_text("#{user.form_email_domain} blocked")
       expect(page).to have_text("block created")
+    end
+  end
+
+  describe "GDPR data erasure" do
+    let!(:product) { create(:product, user: user) }
+    let!(:purchase) { create(:purchase, purchaser: user, full_name: "Test Buyer", street_address: "123 Main St") }
+
+    it "anonymizes user data and shows confirmation" do
+      visit admin_user_path(user.external_id)
+
+      accept_confirm do
+        click_on "GDPR Erase"
+      end
+
+      expect(page).to have_text("GDPR erasure complete")
+
+      user.reload
+      expect(user.name).to eq("[deleted]")
+      expect(user.email).to start_with("deleted-")
+      expect(user.deleted?).to eq(true)
+      expect(user.street_address).to be_nil
+      expect(user.bio).to be_nil
+
+      purchase.reload
+      expect(purchase.full_name).to eq("[deleted]")
+      expect(purchase.street_address).to be_nil
+
+      expect(product.reload.deleted?).to eq(true)
     end
   end
 end

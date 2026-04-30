@@ -3,6 +3,8 @@
 class CustomersController < Sellers::BaseController
   include CurrencyHelper
 
+  rescue_from Faraday::TimeoutError, with: :handle_search_timeout
+
 
   before_action :authorize
   before_action :set_on_page_type
@@ -60,6 +62,7 @@ class CustomersController < Sellers::BaseController
       created_before: params[:created_before],
       country: params[:country],
       active_customers_only: ActiveModel::Type::Boolean.new.cast(params[:active_customers_only]),
+      minimum_license_uses: Feature.active?(:license_uses_sales_filter, current_seller) ? params[:minimum_license_uses] : nil,
     )
     customers_presenter = CustomersPresenter.new(
       pundit_user:,
@@ -93,8 +96,16 @@ class CustomersController < Sellers::BaseController
     render json: purchase.product_purchases.map { CustomerPresenter.new(purchase: _1).customer(pundit_user:) }
   end
 
+  def handle_search_timeout
+    if action_name == "paged"
+      render json: { success: false, error: "request timed out" }, status: :gateway_timeout
+    else
+      redirect_back fallback_location: root_path, warning: "Request timed out. Please try again.", status: :see_other
+    end
+  end
+
   private
-    def fetch_sales(query: nil, sort: nil, products: nil, variants: nil, excluded_products: nil, excluded_variants: nil, minimum_amount_cents: nil, maximum_amount_cents: nil, created_after: nil, created_before: nil, country: nil, active_customers_only: false)
+    def fetch_sales(query: nil, sort: nil, products: nil, variants: nil, excluded_products: nil, excluded_variants: nil, minimum_amount_cents: nil, maximum_amount_cents: nil, created_after: nil, created_before: nil, country: nil, active_customers_only: false, minimum_license_uses: nil)
       search_options = {
         seller: current_seller,
         country: Compliance::Countries.historical_names(country || params[:bought_from]).presence,
@@ -118,12 +129,15 @@ class CustomersController < Sellers::BaseController
 
       if active_customers_only
         search_options[:exclude_deactivated_subscriptions] = true
+        search_options[:exclude_cancelled_or_pending_cancellation_subscriptions] = true
         search_options[:exclude_refunded_except_subscriptions] = true
         search_options[:exclude_unreversed_chargedback] = true
       end
 
       search_options[:price_greater_than] = get_usd_cents(current_seller.currency_type, minimum_amount_cents) if minimum_amount_cents.present?
       search_options[:price_less_than] = get_usd_cents(current_seller.currency_type, maximum_amount_cents) if maximum_amount_cents.present?
+
+      search_options[:license_uses_greater_than_or_equal_to] = minimum_license_uses.to_i if minimum_license_uses.present?
 
       if created_after || created_before
         timezone = ActiveSupport::TimeZone[current_seller.timezone]

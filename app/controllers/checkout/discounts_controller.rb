@@ -5,6 +5,8 @@ class Checkout::DiscountsController < Sellers::BaseController
 
   PER_PAGE = 10
 
+  rescue_from ActiveModel::RangeError, with: :handle_range_error
+
   before_action :clean_params, only: [:create, :update]
 
   layout "inertia", only: [:index]
@@ -113,6 +115,10 @@ class Checkout::DiscountsController < Sellers::BaseController
       offer_code_params[:expires_at] = Time.zone.parse(offer_code_params[:expires_at]) if offer_code_params[:expires_at].present?
     end
 
+    def handle_range_error
+      render json: { success: false, error_message: "The value entered is too large. Please enter a smaller number." }, status: :unprocessable_entity
+    end
+
     def fetch_offer_codes
       # Map user-facing query params to internal params
       params[:sort] = { key: params[:column], direction: params[:sort] } if params[:column].present? && params[:sort].present?
@@ -134,7 +140,11 @@ class Checkout::DiscountsController < Sellers::BaseController
         page_num = total_pages
       end
 
-      pagination, offer_codes = pagy(offer_codes, page: page_num, limit: PER_PAGE)
+      begin
+        pagination, offer_codes = pagy(offer_codes, page: page_num, limit: PER_PAGE)
+      rescue Pagy::OverflowError => e
+        pagination, offer_codes = pagy(offer_codes, page: e.pagy.last, limit: PER_PAGE)
+      end
 
       [PagyPresenter.new(pagination).props, offer_codes]
     end

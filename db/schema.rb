@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2026_11_19_011940) do
+ActiveRecord::Schema[7.1].define(version: 2026_11_24_000000) do
   create_table "active_storage_attachments", charset: "utf8mb4", collation: "utf8mb4_unicode_ci", force: :cascade do |t|
     t.string "name", limit: 191, null: false
     t.string "record_type", limit: 191, null: false
@@ -302,6 +302,7 @@ ActiveRecord::Schema[7.1].define(version: 2026_11_19_011940) do
     t.date "subscription_price_change_effective_date"
     t.text "subscription_price_change_message", size: :long
     t.integer "duration_in_minutes"
+    t.integer "sales_count_for_inventory_cache", default: 0, null: false
     t.index ["link_id"], name: "index_base_variants_on_link_id"
     t.index ["variant_category_id"], name: "index_variants_on_variant_category_id"
   end
@@ -318,6 +319,23 @@ ActiveRecord::Schema[7.1].define(version: 2026_11_19_011940) do
     t.integer "base_variant_id"
     t.index ["base_variant_id"], name: "index_purchases_variants_on_variant_id"
     t.index ["purchase_id"], name: "index_purchases_variants_on_purchase_id"
+  end
+
+  create_table "billing_details", charset: "utf8mb4", collation: "utf8mb4_unicode_ci", force: :cascade do |t|
+    t.bigint "purchaser_id", null: false
+    t.string "full_name", null: false
+    t.string "business_name"
+    t.string "business_id"
+    t.string "street_address", null: false
+    t.string "city", null: false
+    t.string "state"
+    t.string "zip_code", null: false
+    t.string "country_code", limit: 2, null: false
+    t.text "additional_notes"
+    t.boolean "auto_email_invoice_enabled", default: true, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["purchaser_id"], name: "index_billing_details_on_purchaser_id", unique: true
   end
 
   create_table "blocked_customer_objects", charset: "utf8mb4", collation: "utf8mb4_unicode_ci", force: :cascade do |t|
@@ -1128,6 +1146,7 @@ ActiveRecord::Schema[7.1].define(version: 2026_11_19_011940) do
     t.integer "discover_fee_per_thousand", default: 100, null: false
     t.string "support_email"
     t.bigint "default_offer_code_id"
+    t.integer "sales_count_for_inventory_cache", default: 0, null: false
     t.index ["banned_at"], name: "index_links_on_banned_at"
     t.index ["custom_permalink"], name: "index_links_on_custom_permalink", length: 191
     t.index ["default_offer_code_id"], name: "index_links_on_default_offer_code_id"
@@ -1188,6 +1207,7 @@ ActiveRecord::Schema[7.1].define(version: 2026_11_19_011940) do
     t.string "code_challenge"
     t.string "code_challenge_method"
     t.index ["created_at"], name: "index_oauth_access_grants_on_created_at"
+    t.index ["resource_owner_id", "application_id"], name: "idx_on_resource_owner_id_application_id_1b7397c458"
     t.index ["token"], name: "index_oauth_access_grants_on_token", unique: true
   end
 
@@ -1922,7 +1942,7 @@ ActiveRecord::Schema[7.1].define(version: 2026_11_19_011940) do
     t.string "status", default: "pending", null: false
     t.bigint "created_by_id"
     t.datetime "executed_at"
-    t.bigint "payout_amount_cents"
+    t.bigint "payout_amount_cents", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
     t.index ["created_by_id"], name: "index_scheduled_payouts_on_created_by_id"
@@ -2500,6 +2520,16 @@ ActiveRecord::Schema[7.1].define(version: 2026_11_19_011940) do
     t.index ["user_id"], name: "index_user_external_authentications_on_user_id"
   end
 
+  create_table "user_interests", charset: "utf8mb4", collation: "utf8mb4_unicode_ci", force: :cascade do |t|
+    t.bigint "user_id", null: false
+    t.bigint "taxonomy_id", null: false
+    t.string "source_text"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["taxonomy_id"], name: "index_user_interests_on_taxonomy_id"
+    t.index ["user_id", "taxonomy_id"], name: "index_user_interests_on_user_id_and_taxonomy_id", unique: true
+  end
+
   create_table "user_tax_forms", charset: "utf8mb4", collation: "utf8mb4_unicode_ci", force: :cascade do |t|
     t.bigint "user_id", null: false
     t.integer "tax_year", null: false
@@ -2537,7 +2567,6 @@ ActiveRecord::Schema[7.1].define(version: 2026_11_19_011940) do
     t.boolean "payment_notification", default: true
     t.string "currency_type", default: "usd"
     t.text "bio", size: :medium
-    t.string "twitter_handle"
     t.string "username"
     t.bigint "credit_card_id"
     t.string "profile_picture_url"
@@ -2578,6 +2607,7 @@ ActiveRecord::Schema[7.1].define(version: 2026_11_19_011940) do
     t.string "google_uid"
     t.integer "purchasing_power_parity_limit"
     t.string "tiktok_pixel_id"
+    t.string "twitter_handle"
     t.index ["account_created_ip"], name: "index_users_on_account_created_ip"
     t.index ["confirmation_token"], name: "index_users_on_confirmation_token", length: 191
     t.index ["created_at"], name: "index_users_on_created_at"

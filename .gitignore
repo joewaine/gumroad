@@ -24,6 +24,7 @@
 /config/master.key
 /config/credentials.yml.enc
 /config/certs
+/config/content_moderation_blocklist.yml
 /node_modules
 /public/packs
 /public/packs-test
@@ -63,3 +64,11 @@ docs/ssh.md
 test-branch-creation.log
 .vercel
 .claude/worktrees/
+autoresearch.*
+.codex/
+
+# Local PR prep docs (do not commit)
+DEMO_SCRIPT.md
+PR_DESCRIPTION.md
+PR_SUMMARY.md
+RECORDING_SCRIPT.md

@@ -39,7 +39,8 @@ module Purchase::Blockable
                          PurchaseErrorCode::TEMPORARILY_BLOCKED_PRODUCT,
                          PurchaseErrorCode::BLOCKED_CHARGE_PROCESSOR_FINGERPRINT,
                          PurchaseErrorCode::BLOCKED_CUSTOMER_EMAIL_ADDRESS,
-                         PurchaseErrorCode::BLOCKED_CUSTOMER_CHARGE_PROCESSOR_FINGERPRINT]
+                         PurchaseErrorCode::BLOCKED_CUSTOMER_CHARGE_PROCESSOR_FINGERPRINT,
+                         PurchaseErrorCode::EXCEEDING_OFFER_CODE_QUANTITY]
   private_constant :IGNORED_ERROR_CODES
 
   MAX_BUYER_CHARGEBACKS_BEFORE_BLOCK = 5
@@ -180,9 +181,10 @@ module Purchase::Blockable
       return unless failure_code == PurchaseErrorCode::CARD_DECLINED_FRAUDULENT
       return unless purchaser.present?
       return if purchaser.created_at < MAX_PURCHASER_AGE_FOR_SUSPENSION.ago
+      return if purchaser.suspended?
 
-      purchaser.flag_for_fraud!(author_name: "fraudulent_purchases_blocker")
-      purchaser.suspend_for_fraud!(author_name: "fraudulent_purchases_blocker")
+      purchaser.flag_for_fraud!(author_name: "fraudulent_purchases_blocker") if purchaser.can_flag_for_fraud?
+      purchaser.suspend_for_fraud!(author_name: "fraudulent_purchases_blocker") if purchaser.can_suspend_for_fraud?
     end
 
     def ban_card_testers!

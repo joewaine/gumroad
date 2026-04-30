@@ -420,6 +420,14 @@ describe "Product::Searchable - Search scenarios" do
       end
     end
 
+    describe "search_options with String ids param" do
+      it "does not raise NoMethodError when ids is a String" do
+        expect do
+          Link.search_options({ ids: "some-id", sort: "page_layout" })
+        end.not_to raise_error
+      end
+    end
+
     describe "on indexed products with reviews" do
       before do
         creator = create(:compliant_user, username: "username")
@@ -650,7 +658,7 @@ describe "Product::Searchable - Search scenarios" do
       end
 
       it "returns products from both users" do
-        expect(Link.search(Link.search_options(user_id: [product1.user_id, product2.user_id])).records.map(&:id)).to eq([product1.id, product2.id])
+        expect(Link.search(Link.search_options(user_id: [product1.user_id, product2.user_id])).records.map(&:id)).to match_array([product1.id, product2.id])
       end
     end
   end

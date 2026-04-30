@@ -6,7 +6,7 @@ class User < ApplicationRecord
 
   has_paper_trail
   has_one_time_password
-  include Flipper::Identifier, FlagShihTzu, CurrencyHelper, Mongoable, JsonData, Deletable, MoneyBalance,
+  include Flipper::Identifier, FlagShihTzu, CurrencyHelper, JsonData, Deletable, MoneyBalance,
           DeviseInternal, PayoutSchedule, SocialGoogle, SocialApple, SocialGoogleMobile,
           StripeConnect, Stats, PaymentStats, FeatureStatus, Risk, Compliance, Validations, Taxation, PingNotification,
           AsyncDeviseNotification, Posts, AffiliatedProducts, Followers, LowBalanceFraudCheck, MailerLevel,
@@ -58,6 +58,7 @@ class User < ApplicationRecord
 
   has_many :orders, foreign_key: :purchaser_id
   has_many :purchases, foreign_key: :purchaser_id
+  has_one :billing_detail, foreign_key: :purchaser_id, dependent: :destroy
   has_many :purchased_products, -> { distinct }, through: :purchases, class_name: "Link", source: :link
   has_many :sales, class_name: "Purchase", foreign_key: :seller_id
   has_many :preorders_bought, class_name: "Preorder", foreign_key: :purchaser_id
@@ -130,6 +131,8 @@ class User < ApplicationRecord
   has_many :last_read_community_chat_messages, dependent: :destroy
   has_many :community_notification_settings, dependent: :destroy
   has_many :seller_community_chat_recaps, class_name: "CommunityChatRecap", foreign_key: :seller_id, dependent: :destroy
+  has_many :user_interests, dependent: :destroy
+  has_many :declared_interest_taxonomies, through: :user_interests, source: :taxonomy
 
   has_one_attached :avatar
   attr_accessor :avatar_changed
@@ -267,7 +270,7 @@ class User < ApplicationRecord
             27 => :is_eu_vat_exclusive,
             28 => :is_team_member,
             29 => :has_dismissed_getting_started_checklist,
-            30 => :DEPRECATED_has_risk_privilege,
+            30 => :has_used_cli,
             31 => :disable_paypal_sales,
             32 => :all_adult_products,
             33 => :enable_free_downloads_email,
@@ -294,21 +297,19 @@ class User < ApplicationRecord
             :flag_query_mode => :bit_operator,
             check_for_column: false
 
-  LINK_PROPERTIES = %w[username twitter_handle bio name google_analytics_id flags
+  LINK_PROPERTIES = %w[username bio name google_analytics_id flags
                        facebook_pixel_id tiktok_pixel_id skip_free_sale_analytics disable_third_party_analytics].freeze
 
   after_update :clear_products_cache, if: -> (user) { (User::LINK_PROPERTIES & user.saved_changes.keys).present? || user.tiktok_pixel_id_changed_in_json_data? || (%w[font background_color highlight_color] & user.seller_profile&.saved_changes&.keys).present? }
 
   after_save :create_updated_stripe_apple_pay_domain, if: ->(user) { user.saved_change_to_username? }
   after_save :delete_old_stripe_apple_pay_domain, if: ->(user) { user.saved_change_to_username? }
-  after_save :trigger_iffy_ingest
   after_update :update_audience_members_affiliates
   after_update :update_product_search_index!
   after_update :update_alive_cart_email, if: :saved_change_to_email?
   after_commit :move_purchases_to_new_email, on: :update, if: :email_previously_changed?
   after_commit :make_affiliate_of_the_matching_approved_affiliate_requests, on: [:create, :update], if: ->(user) { user.confirmed_at_previously_changed? && user.confirmed? }
   after_commit :generate_subscribe_preview, on: [:create, :update], if: :should_subscribe_preview_be_regenerated?
-  after_create :insert_null_chargeback_state
 
   state_machine(:user_risk_state, initial: :not_reviewed) do
     before_transition any => %i[flagged_for_fraud flagged_for_tos_violation suspended_for_fraud suspended_for_tos_violation],
@@ -322,7 +323,7 @@ class User < ApplicationRecord
     after_transition any => %i[suspended_for_fraud suspended_for_tos_violation], :do => :suspend_sellers_other_accounts
     after_transition any => %i[suspended_for_fraud suspended_for_tos_violation], :do => :block_seller_ip!
     after_transition any => %i[suspended_for_fraud suspended_for_tos_violation], :do => :delete_custom_domain!
-    after_transition any => %i[suspended_for_fraud suspended_for_tos_violation], :do => :log_suspension_time_to_mongo
+    after_transition any => %i[suspended_for_fraud suspended_for_tos_violation], :do => :send_suspension_email
     after_transition any => %i[suspended_for_fraud suspended_for_tos_violation flagged_for_fraud flagged_for_tos_violation],
                      :do => :add_to_gmail_abuse_filter
 
@@ -415,7 +416,7 @@ class User < ApplicationRecord
   def resized_avatar_url(size:)
     return ActionController::Base.helpers.asset_url("gumroad-default-avatar-5.png") unless avatar.attached?
     cdn_url_for(avatar.variant(resize_to_limit: [size, size]).processed.url)
-  rescue ActiveStorage::FileNotFoundError => e
+  rescue ActiveStorage::FileNotFoundError, Errno::ENOENT => e
     Rails.logger.warn("User#resized_avatar_url error (#{id}): #{e.class} => #{e.message}")
     ActionController::Base.helpers.asset_url("gumroad-default-avatar-5.png")
   end
@@ -727,10 +728,6 @@ class User < ApplicationRecord
     GenerateSubscribePreviewJob.perform_async(id)
   end
 
-  def insert_null_chargeback_state
-    Mongoer.async_write("user_risk_state", { "user_id" => id.to_s, "chargeback_state" => nil })
-  end
-
   def minimum_payout_amount_cents
     [payout_threshold_cents, minimum_payout_threshold_cents].max
   end
@@ -1007,8 +1004,7 @@ class User < ApplicationRecord
     return tax_form_1099_download_url if tax_form_1099_download_url.present?
 
     begin
-      key = Digest::SHA1.hexdigest("#{year}-#{id}")
-      s3_path = "tax-forms/#{key}/#{external_id}/tax-1099-form-#{year}.pdf"
+      s3_path = tax_form_1099_s3_key(year:)
       s3_filename = s3_path.split("/").last
       download_url = signed_download_url_for_s3_key_and_filename(s3_path, s3_filename, expires_in: 10.years)
       $redis.set("tax_form_1099_download_url_#{year}_#{external_id}", download_url)
@@ -1016,6 +1012,21 @@ class User < ApplicationRecord
     rescue
       nil
     end
+  end
+
+  def tax_form_1099_s3_bytes(year:)
+    Aws::S3::Resource.new.bucket(S3_BUCKET).object(tax_form_1099_s3_key(year:)).get.body.read
+  rescue Aws::S3::Errors::NoSuchKey
+    nil
+  end
+
+  def tax_form_available_years
+    (created_at.year..(Time.current.year - 1)).to_a
+  end
+
+  private def tax_form_1099_s3_key(year:)
+    key = Digest::SHA1.hexdigest("#{year}-#{id}")
+    "tax-forms/#{key}/#{external_id}/tax-1099-form-#{year}.pdf"
   end
 
   def accessible_communities_ids
@@ -1209,14 +1220,6 @@ class User < ApplicationRecord
 
     def cancel_active_subscriptions!
       subscriptions.active.each { |s| s.cancel!(by_seller: false) }
-    end
-
-    def trigger_iffy_ingest
-      return unless saved_change_to_name? ||
-                    saved_change_to_username? ||
-                    saved_change_to_bio?
-
-      Iffy::Profile::IngestJob.perform_async(id)
     end
 
     def has_completed_payouts?

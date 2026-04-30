@@ -14,7 +14,7 @@ export type Discount = ({ type: "fixed"; cents: number } | { type: "percent"; pe
   code: string | null;
 };
 
-export type License = { id: string; key: string; enabled: boolean };
+export type License = { id: string; key: string; enabled: boolean; uses: number };
 export type Address = {
   full_name: string;
   street_address: string;
@@ -142,6 +142,7 @@ export type Query = {
   createdBefore: Date | null;
   country: string | null;
   activeCustomersOnly: boolean;
+  minimumLicenseUses: number | null;
 };
 
 export const getPagedCustomers = ({
@@ -158,6 +159,7 @@ export const getPagedCustomers = ({
   createdBefore,
   country,
   activeCustomersOnly,
+  minimumLicenseUses,
 }: Query) => {
   const abort = new AbortController();
   const response = request({
@@ -177,6 +179,7 @@ export const getPagedCustomers = ({
       created_before: createdBefore,
       country,
       active_customers_only: activeCustomersOnly,
+      minimum_license_uses: minimumLicenseUses,
     }),
     abortSignal: abort.signal,
   })

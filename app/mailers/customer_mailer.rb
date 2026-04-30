@@ -10,7 +10,7 @@ class CustomerMailer < ApplicationMailer
   layout "layouts/email", except: :send_to_kindle
 
   def grouped_receipt(purchase_ids)
-    @chargeables = Purchase.where(id: purchase_ids).map { Charge::Chargeable.find_by_purchase_or_charge!(purchase: _1) }.uniq
+    @chargeables = Purchase.where(id: purchase_ids).includes(charge: [:order, :seller]).map { Charge::Chargeable.find_by_purchase_or_charge!(purchase: _1) }.uniq
     last_chargeable = @chargeables.last
 
     mail(
@@ -43,6 +43,29 @@ class CustomerMailer < ApplicationMailer
       reply_to: @chargeable.support_email,
       subject: @receipt_presenter.mail_subject,
       template_name: is_receipt_for_gift_receiver ? "gift_receiver_receipt" : "receipt",
+      delivery_method_options: MailerInfo.random_delivery_method_options(domain: :customers, seller: @chargeable.seller)
+    )
+  end
+
+  def auto_invoice(purchase_id = nil, charge_id = nil)
+    @chargeable = Charge::Chargeable.find_by_purchase_or_charge!(
+      purchase: Purchase.find_by(id: purchase_id),
+      charge: Charge.find_by(id: charge_id)
+    )
+    @email_name = __method__
+
+    return unless AutoInvoiceEligibility.eligible?(@chargeable)
+
+    billing_detail = @chargeable.purchaser.billing_detail
+    pdf_bytes = InvoicePdfGenerator.new(@chargeable, billing_detail:).call
+    attachments["invoice-#{@chargeable.external_id_numeric_for_invoice}.pdf"] = pdf_bytes
+
+    mail(
+      to: @chargeable.orderable.email,
+      from: from_email_address_with_name(@chargeable.seller.name, "noreply@#{CUSTOMERS_MAIL_DOMAIN}"),
+      reply_to: @chargeable.support_email,
+      subject: "Your invoice from #{@chargeable.seller.name_or_username}",
+      template_name: "auto_invoice",
       delivery_method_options: MailerInfo.random_delivery_method_options(domain: :customers, seller: @chargeable.seller)
     )
   end

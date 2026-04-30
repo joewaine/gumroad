@@ -21,13 +21,24 @@ class Order::ChargeService
     # i.e. one charge per seller
     # Exclude purchases that already have a payment intent (e.g. subscription restarts
     # requiring SCA — they are confirmed later via Order::ConfirmService)
-    purchases_by_seller = order.purchases.reject { _1.processor_payment_intent.present? }.group_by(&:seller_id)
+    chargeable_purchases = order.purchases.reject { _1.processor_payment_intent.present? }
+    rejected_by_offer_code_limit = Purchase.validate_offer_code_usage_across_line_items(chargeable_purchases)
+    purchases_by_seller = chargeable_purchases.group_by(&:seller_id)
 
     purchases_by_seller.each do |seller_id, seller_purchases|
       self.charge_intent = nil
       self.setup_intent = nil
+
+      # Every purchase in this seller group has already reached a terminal state
+      # (e.g. rejected by `validate_offer_code_usage_across_line_items`) — skip
+      # creating a Charge record that would have no Stripe activity attached.
+      next if seller_purchases.none?(&:in_progress?)
+
       charge = order.charges.create!(seller_id:)
       seller_purchases.each do |purchase|
+        # Skip purchases rejected by `Purchase.validate_offer_code_usage_across_line_items`.
+        # Re-saving would clear the in-memory errors we need for the line item response.
+        next if rejected_by_offer_code_limit.include?(purchase)
         purchase.charge = charge
         purchase.save!
         # Mark free or test purchase as successful as it does not require any further processing
@@ -78,8 +89,10 @@ class Order::ChargeService
       Rails.logger.error("Error charging order (#{order.id}):: #{e.class} => #{e.message} => #{e.backtrace}")
     ensure
       # Ensure all purchases of the charge are transitioned to a terminal state
-      # and each line item has a response
-      ensure_all_purchases_processed(non_free_seller_purchases || seller_purchases.select(&:in_progress?))
+      # and each line item has a response. Include purchases rejected by
+      # `Purchase.validate_offer_code_usage_across_line_items` so their line items
+      # get an error response in `charge_responses`.
+      ensure_all_purchases_processed((non_free_seller_purchases || seller_purchases.select(&:in_progress?)) + (seller_purchases & rejected_by_offer_code_limit))
     end
 
     charge_responses
@@ -88,7 +101,7 @@ class Order::ChargeService
   def mark_successful_if_free_or_test_purchase(purchase)
     if purchase.in_progress? && (purchase.free_purchase? || (purchase.is_test_purchase? && !purchase.is_preorder_authorization?))
       Purchase::MarkSuccessfulService.new(purchase).perform
-      purchase.handle_recommended_purchase if purchase.was_product_recommended
+      handle_recommended_purchase(purchase)
       line_item_uid = params[:line_items].select { |line_item| line_item[:permalink] == purchase.link.unique_permalink }[0][:uid]
       charge_responses[line_item_uid] = purchase.purchase_response
     end
@@ -155,7 +168,7 @@ class Order::ChargeService
 
     if purchase.is_free_trial_purchase?
       Purchase::MarkSuccessfulService.new(purchase).perform
-      purchase.handle_recommended_purchase if purchase.was_product_recommended
+      handle_recommended_purchase(purchase)
     else
       preorder = purchase.preorder
       preorder.authorize!
@@ -215,7 +228,7 @@ class Order::ChargeService
 
           next unless purchase.in_progress? && purchase.errors.empty?
           Purchase::MarkSuccessfulService.new(purchase).perform
-          purchase.handle_recommended_purchase if purchase.was_product_recommended
+          handle_recommended_purchase(purchase)
         end
       elsif charge_intent&.requires_action?
         purchases_to_charge.each do |purchase|
@@ -255,10 +268,12 @@ class Order::ChargeService
       if purchase.in_progress?
         if purchase.free_purchase? || (purchase.is_test_purchase? && !purchase.is_preorder_authorization?)
           Purchase::MarkSuccessfulService.new(purchase).perform
-          purchase.handle_recommended_purchase if purchase.was_product_recommended
+          handle_recommended_purchase(purchase)
         elsif charge_intent&.requires_action? || setup_intent&.requires_action?
           # Check back later to see if the purchase has been completed. If not, transition to a failed state.
           FailAbandonedPurchaseWorker.perform_in(ChargeProcessor::TIME_TO_COMPLETE_SCA, purchase.id)
+        elsif charge_intent&.succeeded? && purchase_has_charge_data?(purchase)
+          mark_charged_purchase_successful(purchase)
         else
           Purchase::MarkFailedService.new(purchase).perform
         end
@@ -288,9 +303,42 @@ class Order::ChargeService
         }
       else
         charge_responses[line_item_uid] ||= purchase.purchase_response
-        purchase.handle_recommended_purchase if purchase.was_product_recommended
+        handle_recommended_purchase(purchase)
       end
     end
+  end
+
+  def purchase_has_charge_data?(purchase)
+    purchase.errors.empty? && (purchase.stripe_transaction_id.present? || purchase.paypal_order_id.present?)
+  end
+
+  def mark_charged_purchase_successful(purchase)
+    apply_seller_balance_transaction(purchase)
+
+    Purchase::MarkSuccessfulService.new(purchase).perform
+  rescue StandardError => e
+    Rails.logger.error("Error finalizing charged purchase (#{purchase.id}):: #{e.class} => #{e.message} => #{e.backtrace}")
+    purchase.errors.add(:base, "Sorry, something went wrong. Please try again.") unless purchase.successful?
+  end
+
+  def handle_recommended_purchase(purchase)
+    return unless purchase.was_product_recommended
+
+    purchase.handle_recommended_purchase
+  rescue StandardError => e
+    Rails.logger.error("Error handling recommended purchase (#{purchase.id}):: #{e.class} => #{e.message} => #{e.backtrace}")
+  end
+
+  def apply_seller_balance_transaction(purchase)
+    return unless purchase.charged_using_gumroad_merchant_account?
+    return if purchase.purchase_success_balance_id.present?
+
+    seller_balance_transaction = purchase.balance_transactions.where(user: purchase.seller).where.not(balance_id: nil).last ||
+                                 purchase.balance_transactions.where(user: purchase.seller, balance_id: nil).last
+    return unless seller_balance_transaction
+
+    seller_balance_transaction.update_balance! if seller_balance_transaction.balance_id.blank?
+    purchase.update!(purchase_success_balance: seller_balance_transaction.balance)
   end
 
   def mandate_options_for_stripe(purchases:, with_currency: false)

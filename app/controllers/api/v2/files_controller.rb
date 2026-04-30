@@ -12,7 +12,7 @@ class Api::V2::FilesController < Api::V2::BaseController
     filename = ActiveStorage::Filename.new(params[:filename].to_s).sanitized
     return error_400("filename is required") if filename.blank?
 
-    file_size = params[:file_size].to_i
+    file_size = params[:file_size].to_s.to_i
     return error_400("file_size is required") if file_size <= 0
     return error_400("file_size exceeds the #{MAX_FILE_SIZE_GB} GB maximum") if file_size > MAX_FILE_SIZE
 
@@ -53,7 +53,12 @@ class Api::V2::FilesController < Api::V2::BaseController
 
     return error_400("invalid key") unless key.start_with?(s3_key_prefix)
 
-    parts = Array(params[:parts]).map { |p| { part_number: p[:part_number].to_i, etag: p[:etag].to_s } }
+    raw_parts = Array(params[:parts])
+    unless raw_parts.all? { |p| p.respond_to?(:[]) && !p[:part_number].is_a?(Array) && !p[:etag].is_a?(Array) }
+      return error_400("each part must have scalar part_number and etag values")
+    end
+
+    parts = raw_parts.map { |p| { part_number: p[:part_number].to_i, etag: p[:etag].to_s } }
 
     Aws::S3::Client.new.complete_multipart_upload(
       bucket: S3_BUCKET,
@@ -63,6 +68,23 @@ class Api::V2::FilesController < Api::V2::BaseController
     )
 
     render json: { success: true, file_url: s3_file_url(key) }
+  rescue Aws::S3::Errors::ServiceError => e
+    error_400(e.message)
+  end
+
+  def abort
+    upload_id = params[:upload_id].to_s
+    key = params[:key].to_s
+
+    return error_400("upload_id is required") if upload_id.blank?
+    return error_400("key is required") if key.blank?
+    return error_400("invalid key") unless key.start_with?(s3_key_prefix)
+
+    Aws::S3::Client.new.abort_multipart_upload(bucket: S3_BUCKET, key:, upload_id:)
+
+    render json: { success: true, status: "accepted" }
+  rescue Aws::S3::Errors::NoSuchUpload
+    render json: { success: true, status: "already_gone" }
   rescue Aws::S3::Errors::ServiceError => e
     error_400(e.message)
   end

@@ -50,9 +50,6 @@ class User::OmniauthCallbacksController < Devise::OmniauthCallbacksController
       if user.nil?
         flash[:alert] = "An account already exists with this email."
         return safe_redirect_to referer
-      elsif user.is_team_member?
-        flash[:alert] = "You're an admin, you can't login with Stripe."
-        return safe_redirect_to referer
       elsif user.deleted?
         flash[:alert] = "You cannot log in because your account was permanently deleted. Please sign up for a new account to start selling!"
         return safe_redirect_to referer
@@ -68,13 +65,8 @@ class User::OmniauthCallbacksController < Devise::OmniauthCallbacksController
         create_user_event("signup")
       end
 
-      if user.email.present?
-        sign_in_or_prepare_for_two_factor_auth(user)
-        return redirect_to two_factor_authentication_path(next: oauth_completions_stripe_path)
-      else
-        sign_in user
-        return safe_redirect_to oauth_completions_stripe_path
-      end
+      sign_in user
+      return safe_redirect_to oauth_completions_stripe_path
     end
 
     session[:stripe_connect_data] = {
@@ -116,15 +108,9 @@ class User::OmniauthCallbacksController < Devise::OmniauthCallbacksController
 
     def sign_in_with_oauth(provider_name)
       if @user&.persisted?
-        if @user.is_team_member?
-          flash[:alert] = "You're an admin, you can't login with #{provider_name}."
-          redirect_to login_path
-        elsif @user.deleted?
+        if @user.deleted?
           flash[:alert] = "You cannot log in because your account was permanently deleted. Please sign up for a new account to start selling!"
           redirect_to login_path
-        elsif @user.email.present?
-          sign_in_or_prepare_for_two_factor_auth(@user)
-          redirect_to two_factor_authentication_path(next: post_auth_redirect(@user))
         else
           sign_in @user
           safe_redirect_to post_auth_redirect(@user)
