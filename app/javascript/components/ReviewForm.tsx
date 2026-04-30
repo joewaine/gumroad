@@ -279,9 +279,7 @@ export const ReviewForm = React.forwardRef<
         id={uid}
         value={message}
         onChange={(evt) => setMessage(evt.target.value)}
-        onTranscript={(text) =>
-          setMessage((prev) => (prev.trim() ? `${prev.replace(/\s+$/u, "")} ${text}` : text))
-        }
+        onTranscript={(text) => setMessage((prev) => (prev.trim() ? `${prev.replace(/\s+$/u, "")} ${text}` : text))}
         placeholder="Want to leave a written review? Type or tap the mic."
         voiceLabel="Speak your review"
         disabled={disabled}
